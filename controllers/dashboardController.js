@@ -1,6 +1,14 @@
 import pool from "../config/db.js";
 
-const today = new Date().toISOString().split("T")[0];
+const formatLocalYMD = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const today = formatLocalYMD(new Date());
+
 const logQueries = process.env.LOG_QUERIES === "true";
 const log = (...args) => {
   if (logQueries) console.log(...args);
@@ -10,8 +18,8 @@ const log = (...args) => {
 const getCurrentMonthRange = () => {
   const currentDate = new Date();
   const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-  const firstDayStr = firstDayOfMonth.toISOString().split('T')[0];
-  const currentDayStr = currentDate.toISOString().split('T')[0];
+  const firstDayStr = formatLocalYMD(firstDayOfMonth);
+  const currentDayStr = formatLocalYMD(currentDate);
   return { firstDayStr, currentDayStr };
 };
 

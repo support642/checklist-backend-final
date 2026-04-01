@@ -12,20 +12,57 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         const role = req.query.role;
         const department = req.query.department;
         const search = req.query.search || "";
+        const status = req.query.status || "all";
+        const frequency = req.query.frequency || "all";
+        const nameFilter = req.query.name || "all";
+        const divisionFilter = req.query.divisionFilter || "all";
+        const departmentFilter = req.query.departmentFilter || "all";
         const startDate = req.query.startDate;
         const endDate = req.query.endDate;
 
         const limit = 50;
         const offset = (page - 1) * limit;
+        const queryParams = [limit, offset];
 
-        // Show pending tasks including future tasks up to 1 year ahead
-        let where = `
-      t.submission_date IS NULL
-      AND DATE(t.task_start_date) <= CURRENT_DATE + INTERVAL '365 days'
-    `;
+        // Base filter for pending tasks
+        let where = `t.submission_date IS NULL AND DATE(t.task_start_date) <= CURRENT_DATE + INTERVAL '1 day'`;
 
         if (startDate && endDate) {
-            where += ` AND t.task_start_date >= '${startDate}' AND t.task_start_date <= '${endDate} 23:59:59' `;
+            where += ` AND t.task_start_date >= $${queryParams.length + 1} AND t.task_start_date <= $${queryParams.length + 2} `;
+            queryParams.push(startDate, `${endDate} 23:59:59`);
+        }
+
+        // ⭐ Status Filter (Today, Overdue, Upcoming)
+        if (status === "today") {
+            where += ` AND DATE(t.task_start_date) = CURRENT_DATE `;
+        } else if (status === "overdue") {
+            where += ` AND DATE(t.task_start_date) < CURRENT_DATE `;
+        } else if (status === "upcoming") {
+            where += ` AND DATE(t.task_start_date) > CURRENT_DATE `;
+        }
+
+        // ⭐ Frequency Filter
+        if (frequency !== "all") {
+            where += ` AND LOWER(t.frequency) = LOWER($${queryParams.length + 1}) `;
+            queryParams.push(frequency);
+        }
+
+        // ⭐ Name Filter
+        if (nameFilter !== "all") {
+            where += ` AND LOWER(t.name) = LOWER($${queryParams.length + 1}) `;
+            queryParams.push(nameFilter);
+        }
+
+        // ⭐ Division Filter
+        if (divisionFilter !== "all" && divisionFilter !== "undefined") {
+            where += ` AND LOWER(t.division) = LOWER($${queryParams.length + 1}) `;
+            queryParams.push(divisionFilter);
+        }
+
+        // ⭐ Department Filter
+        if (departmentFilter !== "all" && departmentFilter !== "undefined") {
+            where += ` AND LOWER(t.department) = LOWER($${queryParams.length + 1}) `;
+            queryParams.push(departmentFilter);
         }
 
         const requesterUnit = req.query.unit;
@@ -50,21 +87,23 @@ export const getPendingMaintenanceTasks = async (req, res) => {
             }
         }
         else if (username) {
-            where += ` AND LOWER(t.name) = LOWER('${username.replace(/'/g, "''")}') `;
+            where += ` AND LOWER(t.name) = LOWER($${queryParams.length + 1}) `;
+            queryParams.push(username);
         }
 
         // ⭐ Add search filter if search term is provided
         if (search.trim()) {
-            const searchLower = search.toLowerCase().replace(/'/g, "''");
+            const searchParamIndex = queryParams.length + 1;
             where += ` AND (
-        LOWER(t.name) LIKE '%${searchLower}%' OR
-        LOWER(t.task_description) LIKE '%${searchLower}%' OR
-        LOWER(t.department) LIKE '%${searchLower}%' OR
-        LOWER(t.given_by) LIKE '%${searchLower}%' OR
-        LOWER(COALESCE(mp.machine_name, t.machine_name)) LIKE '%${searchLower}%' OR
-        LOWER(COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', '))) LIKE '%${searchLower}%' OR
-        CAST(t.id AS TEXT) LIKE '%${searchLower}%'
-      ) `;
+                LOWER(t.name) LIKE $${searchParamIndex} OR
+                LOWER(t.task_description) LIKE $${searchParamIndex} OR
+                LOWER(t.department) LIKE $${searchParamIndex} OR
+                LOWER(t.given_by) LIKE $${searchParamIndex} OR
+                LOWER(COALESCE(mp.machine_name, t.machine_name)) LIKE $${searchParamIndex} OR
+                LOWER(COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', '))) LIKE $${searchParamIndex} OR
+                CAST(t.id AS TEXT) LIKE $${searchParamIndex}
+            ) `;
+            queryParams.push(`%${search.toLowerCase()}%`);
         }
 
         const query = `
@@ -87,6 +126,7 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         t.remarks as remark,
         t.uploaded_image_url as image,
         t.admin_done,
+        t.admin_remark,
         COALESCE(mp.machine_name, t.machine_name) as machine_name,
         COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', ')) as part_name,
         COALESCE(mp.machine_area, t.part_area) as part_area,
@@ -100,11 +140,17 @@ export const getPendingMaintenanceTasks = async (req, res) => {
       FROM maintenance_tasks t
       LEFT JOIN machine_parts mp ON t.machine_part_id = mp.id
       WHERE ${where}
-      ORDER BY t.task_start_date ASC
+      ORDER BY 
+        CASE 
+          WHEN DATE(t.task_start_date) < CURRENT_DATE THEN 0
+          WHEN DATE(t.task_start_date) = CURRENT_DATE THEN 1
+          ELSE 2 
+        END,
+        t.task_start_date ASC
       LIMIT $1 OFFSET $2
     `;
 
-        const { rows } = await pool.query(query, [limit, offset]);
+        const { rows } = await pool.query(query, queryParams);
 
         const totalCount = rows.length > 0 ? rows[0].total_count : 0;
 
@@ -143,6 +189,10 @@ export const getMaintenanceHistory = async (req, res) => {
 
         const requesterUnit = req.query.unit;
         const requesterDivision = req.query.division;
+        const divisionFilter = req.query.divisionFilter;
+        const departmentFilter = req.query.departmentFilter;
+        const nameFilter = req.query.nameFilter;
+
         const upRole = (role || "").toUpperCase();
 
         if (upRole === "SUPER_ADMIN") {
@@ -164,6 +214,17 @@ export const getMaintenanceHistory = async (req, res) => {
         }
         else if (username) {
             where += ` AND LOWER(t.name) = LOWER('${username.replace(/'/g, "''")}') `;
+        }
+
+        // ⭐ UI Filters
+        if (divisionFilter && divisionFilter !== 'all') {
+            where += ` AND LOWER(t.division) = LOWER('${divisionFilter.replace(/'/g, "''")}') `;
+        }
+        if (departmentFilter && departmentFilter !== 'all') {
+            where += ` AND LOWER(t.department) = LOWER('${departmentFilter.replace(/'/g, "''")}') `;
+        }
+        if (nameFilter && nameFilter !== 'all') {
+            where += ` AND LOWER(t.name) = LOWER('${nameFilter.replace(/'/g, "''")}') `;
         }
 
         const params = [limit, offset];
@@ -203,6 +264,7 @@ export const getMaintenanceHistory = async (req, res) => {
         t.remarks as remark,
         t.uploaded_image_url as image,
         t.admin_done,
+        t.admin_remark,
         COALESCE(mp.machine_name, t.machine_name) as machine_name,
         COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', ')) as part_name,
         COALESCE(mp.machine_area, t.part_area) as part_area,
@@ -261,27 +323,73 @@ export const updateMaintenanceTasks = async (req, res) => {
                 // ---------------------------------
                 // 🔥🔥 IMAGE HANDLING
                 // ---------------------------------
-                let finalImageUrl = null;
+                let finalImageUrls = [];
 
-                if (item.image && typeof item.image === "string") {
-                    if (item.image.startsWith("data:image")) {
-                        // Base64 → Buffer
-                        const base64Data = item.image.split(";base64,").pop();
-                        const buffer = Buffer.from(base64Data, "base64");
+                if (item.images && Array.isArray(item.images)) {
+                    for (const imageStr of item.images) {
+                        if (typeof imageStr === "string") {
+                            if (imageStr.startsWith("data:")) {
+                                const matches = imageStr.match(/^data:([a-zA-Z0-9-+\/.]+);base64,(.+)$/);
+                                if (matches && matches.length === 3) {
+                                    const mimeType = matches[1];
+                                    const base64Data = matches[2];
+                                    const buffer = Buffer.from(base64Data, "base64");
 
-                        const fakeFile = {
-                            originalname: `maint_task_${item.taskId}_${Date.now()}.jpg`,
-                            buffer,
-                            mimetype: "image/jpeg",
-                        };
+                                    let extension = mimeType.split('/')[1] || "bin";
+                                    if (mimeType.includes("jpeg") || mimeType.includes("jpg")) extension = "jpg";
+                                    else if (mimeType.includes("pdf")) extension = "pdf";
+                                    else if (mimeType.includes("word") || mimeType.includes("document")) extension = "docx";
+                                    else if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) extension = "xlsx";
+                                    else if (mimeType.includes("csv")) extension = "csv";
 
-                        // Upload to S3
-                        finalImageUrl = await uploadToS3(fakeFile);
+                                    const fakeFile = {
+                                        originalname: `maint_task_${item.taskId}_${Date.now()}_${Math.floor(Math.random() * 1000)}.${extension}`,
+                                        buffer,
+                                        mimetype: mimeType,
+                                    };
+
+                                    const s3Url = await uploadToS3(fakeFile);
+                                    if (s3Url) finalImageUrls.push(s3Url);
+                                } else {
+                                    finalImageUrls.push(imageStr);
+                                }
+                            } else {
+                                finalImageUrls.push(imageStr);
+                            }
+                        }
+                    }
+                } else if (item.image && typeof item.image === "string") {
+                    if (item.image.startsWith("data:")) {
+                        const matches = item.image.match(/^data:([a-zA-Z0-9-+\/.]+);base64,(.+)$/);
+                        if (matches && matches.length === 3) {
+                            const mimeType = matches[1];
+                            const base64Data = matches[2];
+                            const buffer = Buffer.from(base64Data, "base64");
+
+                            let extension = mimeType.split('/')[1] || "bin";
+                            if (mimeType.includes("jpeg") || mimeType.includes("jpg")) extension = "jpg";
+                            else if (mimeType.includes("pdf")) extension = "pdf";
+                            else if (mimeType.includes("word") || mimeType.includes("document")) extension = "docx";
+                            else if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) extension = "xlsx";
+                            else if (mimeType.includes("csv")) extension = "csv";
+
+                            const fakeFile = {
+                                originalname: `maint_task_${item.taskId}_${Date.now()}.${extension}`,
+                                buffer,
+                                mimetype: mimeType,
+                            };
+
+                            const s3Url = await uploadToS3(fakeFile);
+                            if (s3Url) finalImageUrls.push(s3Url);
+                        } else {
+                            finalImageUrls.push(item.image);
+                        }
                     } else {
                         // Already S3 URL or old string
-                        finalImageUrl = item.image;
+                        finalImageUrls.push(item.image);
                     }
                 }
+                const finalImageUrl = finalImageUrls.length > 0 ? finalImageUrls.join(',') : null;
 
                 // ---------------------------------
                 // 🔥 SAVE TO DATABASE
@@ -333,13 +441,14 @@ export const adminDoneMaintenance = async (req, res) => {
 
         const sql = `
       UPDATE maintenance_tasks
-      SET admin_done = 'true'
+      SET admin_done = 'true',
+          admin_remark = $2
       WHERE id = $1
     `;
 
         for (const item of items) {
             // item must have task_id
-            await client.query(sql, [item.task_id]);
+             await client.query(sql, [item.task_id, item.remarks || ""]);
         }
 
         await client.query("COMMIT");

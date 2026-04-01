@@ -114,7 +114,8 @@ export const createUser = async (req, res) => {
       unit,
       division,
       system_access,
-      page_access
+      page_access,
+      subscription_access_system
     } = req.body;
 
 
@@ -132,9 +133,9 @@ export const createUser = async (req, res) => {
     const query = `
       INSERT INTO users (
         user_name, password, email_id, number, department,
-        given_by, role, status, user_access, unit, division, system_access, page_access
+        given_by, role, status, user_access, unit, division, system_access, page_access, subscription_access_system
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
       RETURNING *
     `;
 
@@ -152,7 +153,8 @@ export const createUser = async (req, res) => {
       unit || null,
       division || null,
       system_access ? JSON.stringify(system_access) : null,
-      page_access ? JSON.stringify(page_access) : null
+      page_access ? JSON.stringify(page_access) : null,
+      subscription_access_system ? JSON.stringify(subscription_access_system) : null
     ];
 
     const result = await pool.query(query, values);
@@ -189,7 +191,8 @@ export const updateUser = async (req, res) => {
       leave_end_date,
       remark,
       system_access,
-      page_access
+      page_access,
+      subscription_access_system
     } = req.body;
 
     // Fetch the old user_name before updating
@@ -214,7 +217,8 @@ export const updateUser = async (req, res) => {
         unit = $15,
         division = $16,
         system_access = $17,
-        page_access = $18
+        page_access = $18,
+        subscription_access_system = $19
       WHERE id = $14
       RETURNING *
     `;
@@ -224,7 +228,8 @@ export const updateUser = async (req, res) => {
       role, status, user_access, department, given_by,
       leave_date, leave_end_date, remark, id, unit || null, division || null,
       system_access ? JSON.stringify(system_access) : null,
-      page_access ? JSON.stringify(page_access) : null
+      page_access ? JSON.stringify(page_access) : null,
+      subscription_access_system ? JSON.stringify(subscription_access_system) : null
     ];
 
 

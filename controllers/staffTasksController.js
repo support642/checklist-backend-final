@@ -1,5 +1,12 @@
 import pool from "../config/db.js";
 
+const formatLocalYMD = (date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 export const getStaffTasks = async (req, res) => {
   try {
     const {
@@ -15,11 +22,12 @@ export const getStaffTasks = async (req, res) => {
       division = "",
       department = "",
       startDate: queryStartDate = "",
-      endDate: queryEndDate = ""
+      endDate: queryEndDate = "",
+      search = ""
     } = req.query;
 
     const table = dashboardType;
-    const offset = (page - 1) * limit;
+    const offset = (Number(page) - 1) * Number(limit);
 
     let completedCondition = "";
 
@@ -73,33 +81,45 @@ export const getStaffTasks = async (req, res) => {
       }
     }
 
-    // Add month-year filter if provided
-    if (monthYear) {
-      const [year, month] = monthYear.split('-').map(Number);
-      const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
-      const endDate = new Date(year, month, 0).toISOString().split('T')[0];
-
-      staffQuery += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
-      params.push(startDate, `${endDate} 23:59:59`);
-      paramCount += 2;
-    }
-    // Add till-date filter if provided (independent of month filter)
-    if (tillDate) {
-      staffQuery += ` AND t.${dateCol} <= $${paramCount}`;
-      params.push(`${tillDate} 23:59:59`);
+    // Add search filter if provided
+    if (search) {
+      staffQuery += ` AND t.name ILIKE $${paramCount}`;
+      params.push(`%${search}%`);
       paramCount++;
     }
 
-    // Add global date range filter if provided
+    // Add date filter - Hierarchy:
+    // 1. Explicit queryStartDate & queryEndDate (from Export Modal/Header)
+    // 2. Or monthYear (from Month Dropdown)
+    // 3. Optional tillDate cap (independent or fallback)
+
     if (queryStartDate && queryEndDate) {
       staffQuery += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
       params.push(queryStartDate, `${queryEndDate} 23:59:59`);
       paramCount += 2;
+    } else if (monthYear) {
+      const [year, month] = monthYear.split('-').map(Number);
+      const startOfMonth = new Date(year, month - 1, 1);
+      const endOfMonth = new Date(year, month, 0);
+      
+      const startDate = formatLocalYMD(startOfMonth);
+      const endDate = formatLocalYMD(endOfMonth);
+
+      staffQuery += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
+      params.push(startDate, `${endDate} 23:59:59`);
+      paramCount += 2;
+    } else if (tillDate) {
+      staffQuery += ` AND t.${dateCol} <= $${paramCount}`;
+      params.push(`${tillDate} 23:59:59`);
+      paramCount++;
+    } else {
+      staffQuery += ` AND t.${dateCol} <= NOW()`;
     }
 
     if (staffFilter !== "all") {
       staffQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
       params.push(staffFilter);
+      paramCount++;
     }
 
     if (userRole === "SUPER_ADMIN") {
@@ -108,14 +128,17 @@ export const getStaffTasks = async (req, res) => {
       staffQuery += ` ORDER BY t.name ASC`;
     }
 
+    // Server-side Pagination
+    staffQuery += ` LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
+    params.push(Number(limit), offset);
+    paramCount += 2;
+
     const staffResult = await pool.query(staffQuery, params);
-    const allStaff = staffResult.rows.map(r => ({
+    const paginatedStaff = staffResult.rows.map(r => ({
       name: r.name || r.t_name,
       department: r.department || "N/A",
       division: r.division || "N/A"
     }));
-
-    const paginatedStaff = allStaff.slice(offset, offset + limit);
 
     if (paginatedStaff.length === 0) {
       return res.json([]);
@@ -146,18 +169,18 @@ export const getStaffTasks = async (req, res) => {
           ) AS overdue,
           SUM(
             CASE 
-              WHEN submission_date IS NOT NULL AND submission_date <= ${dateCol}
-              THEN 1 
-              WHEN submission_date IS NULL AND ${completedCondition} AND ${dateCol} <= NOW()
-              THEN 1
-              ELSE 0 
+               WHEN submission_date IS NOT NULL AND submission_date <= ${dateCol}
+               THEN 1 
+               WHEN submission_date IS NULL AND ${completedCondition} AND ${dateCol} <= NOW()
+               THEN 1
+               ELSE 0 
             END
           ) AS done_on_time,
           AVG(
             CASE 
-              WHEN submission_date IS NOT NULL AND submission_date > ${dateCol}
-              THEN EXTRACT(EPOCH FROM (submission_date - ${dateCol})) / 86400.0 -- Delay in days
-              ELSE 0
+               WHEN submission_date IS NOT NULL AND submission_date > ${dateCol}
+               THEN EXTRACT(EPOCH FROM (submission_date - ${dateCol})) / 86400.0 -- Delay in days
+               ELSE 0
             END
           ) AS avg_delay_days
         FROM ${table}
@@ -169,31 +192,28 @@ export const getStaffTasks = async (req, res) => {
       tp.push(staffName);
       tc++;
 
-      // Add month-year filter to task query if provided
-      if (monthYear) {
-        const [year, month] = monthYear.split('-').map(Number);
-        const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
-        const endDate = new Date(year, month, 0).toISOString().split('T')[0];
-
-        taskQuery += ` AND ${dateCol} >= $${tc} AND ${dateCol} <= $${tc + 1}`;
-        tp.push(startDate, `${endDate} 23:59:59`);
-        tc += 2;
-      } else {
-        taskQuery += ` AND ${dateCol} <= NOW()`;
-      }
-
-      // Add till-date filter to task query if provided
-      if (tillDate) {
-        taskQuery += ` AND ${dateCol} <= $${tc}`;
-        tp.push(`${tillDate} 23:59:59`);
-        tc++;
-      }
-
-      // Add global date range filter to task query if provided
+      // Task data filter hierarchy
       if (queryStartDate && queryEndDate) {
         taskQuery += ` AND ${dateCol} >= $${tc} AND ${dateCol} <= $${tc + 1}`;
         tp.push(queryStartDate, `${queryEndDate} 23:59:59`);
         tc += 2;
+      } else if (monthYear) {
+        const [year, month] = monthYear.split('-').map(Number);
+        const startOfMonth = new Date(year, month - 1, 1);
+        const endOfMonth = new Date(year, month, 0);
+        
+        const startDate = formatLocalYMD(startOfMonth);
+        const endDate = formatLocalYMD(endOfMonth);
+
+        taskQuery += ` AND ${dateCol} >= $${tc} AND ${dateCol} <= $${tc + 1}`;
+        tp.push(startDate, `${endDate} 23:59:59`);
+        tc += 2;
+      } else if (tillDate) {
+        taskQuery += ` AND ${dateCol} <= $${tc}`;
+        tp.push(`${tillDate} 23:59:59`);
+        tc++;
+      } else {
+        taskQuery += ` AND ${dateCol} <= NOW()`;
       }
 
       taskQuery += ` AND ${dateCol} IS NOT NULL`;
@@ -258,9 +278,22 @@ export const getStaffDetails = async (req, res) => {
       return res.status(400).json({ error: "staffName is required" });
     }
 
-    const table = dashboardType;
-    const dateCol = table === "checklist" ? "task_start_date" : "planned_date";
+    const table = dashboardType === 'maintenance' ? 'maintenance_tasks' : dashboardType;
+    const dateCol = (table === "checklist" || table === "maintenance_tasks") ? "task_start_date" : "planned_date";
     const userRole = (role || "").toUpperCase();
+
+    let completionClause = "(LOWER(t.status) = 'yes' OR t.submission_date IS NOT NULL)";
+    let onTimeClause = "false";
+
+    if (table === 'maintenance_tasks') {
+      completionClause = "(t.status = 'Done')";
+      onTimeClause = "(t.status = 'Done')";
+    } else if (table === 'checklist') {
+      completionClause = "(t.status = 'yes')";
+      onTimeClause = "(t.submission_date IS NOT NULL AND t.delay <= interval '0')";
+    } else if (table === 'delegation') {
+      onTimeClause = "(t.color_code_for = '1' OR t.color_code_for = 1)";
+    }
 
     let query = `
       SELECT 
@@ -270,28 +303,42 @@ export const getStaffDetails = async (req, res) => {
         u.division,
         u.department,
         t.name,
-        CASE WHEN t.task_start_date IS NOT NULL THEN to_char(t.task_start_date::timestamp, 'YYYY-MM-DD') ELSE '—' END as start_date,
+        ${(table === 'checklist' || table === 'maintenance_tasks') ? 't.frequency' : 'NULL as frequency'},
+        ${completionClause} as is_completed,
+        ${onTimeClause} as is_on_time,
+        CASE WHEN t.${dateCol} IS NOT NULL THEN to_char(t.${dateCol}::timestamp, 'YYYY-MM-DD') ELSE '—' END as start_date,
         CASE WHEN t.created_at IS NOT NULL THEN to_char(t.created_at::timestamp, 'YYYY-MM-DD') ELSE '—' END as end_date,
         CASE WHEN t.submission_date IS NOT NULL THEN to_char(t.submission_date::timestamp, 'YYYY-MM-DD') ELSE '—' END as submission_date
       FROM ${table} t
       LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
-      WHERE LOWER(t.name) = LOWER($1)
+      WHERE TRIM(LOWER(t.name)) = TRIM(LOWER($1))
     `;
 
     const params = [staffName];
     let paramCount = 2;
 
-    // Exclude upcoming tasks (tasks after today or tillDate)
-    const effectiveTillDate = tillDate ? tillDate : new Date().toISOString().split('T')[0];
-    query += ` AND t.${dateCol}::date <= $${paramCount}::date`;
-    params.push(effectiveTillDate);
-    paramCount++;
-
-    // Add global date range filter if provided
+    // Staff Detail Detail Filter Hierarchy
     if (queryStartDate && queryEndDate) {
-      query += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
+      query += ` AND t.${dateCol}::timestamp >= $${paramCount}::timestamp AND t.${dateCol}::timestamp <= $${paramCount + 1}::timestamp`;
       params.push(queryStartDate, `${queryEndDate} 23:59:59`);
       paramCount += 2;
+    } else if (monthYear) {
+      const [year, month] = monthYear.split('-').map(Number);
+      const startOfMonth = new Date(year, month - 1, 1);
+      const endOfMonth = new Date(year, month, 0);
+      
+      const startDate = formatLocalYMD(startOfMonth);
+      const endDate = formatLocalYMD(endOfMonth);
+ 
+      query += ` AND t.${dateCol}::timestamp >= $${paramCount}::timestamp AND t.${dateCol}::timestamp <= $${paramCount + 1}::timestamp`;
+      params.push(startDate, `${endDate} 23:59:59`);
+      paramCount += 2;
+    } else if (tillDate) {
+      query += ` AND t.${dateCol}::timestamp <= $${paramCount}::timestamp`;
+      params.push(`${tillDate} 23:59:59`);
+      paramCount++;
+    } else {
+      query += ` AND t.${dateCol}::timestamp <= NOW()`;
     }
 
     // Role-based restrictions (similar to getStaffTasks but focused on the selected user)
@@ -308,10 +355,13 @@ export const getStaffDetails = async (req, res) => {
     // Month-year filter
     if (monthYear) {
       const [year, month] = monthYear.split('-').map(Number);
-      const startDate = `${year}-${month.toString().padStart(2, '0')}-01`;
-      const endDate = new Date(year, month, 0).toISOString().split('T')[0];
-
-      query += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
+      const startOfMonth = new Date(year, month - 1, 1);
+      const endOfMonth = new Date(year, month, 0);
+      
+      const startDate = formatLocalYMD(startOfMonth);
+      const endDate = formatLocalYMD(endOfMonth);
+ 
+      query += ` AND t.${dateCol}::timestamp >= $${paramCount}::timestamp AND t.${dateCol}::timestamp <= $${paramCount + 1}::timestamp`;
       params.push(startDate, `${endDate} 23:59:59`);
       paramCount += 2;
     }
@@ -322,7 +372,7 @@ export const getStaffDetails = async (req, res) => {
     return res.json(result.rows);
 
   } catch (err) {
-    console.error("Error in getStaffDetails:", err);
+    console.error("Error in getStaffDetails:", err.message);
     res.status(500).json({ error: err.message });
   }
 };
@@ -338,7 +388,8 @@ export const getStaffCount = async (req, res) => {
       username = "",
       unit = "",
       division = "",
-      department = ""
+      department = "",
+      search = ""
     } = req.query;
     const table = dashboardType;
 
@@ -385,6 +436,13 @@ export const getStaffCount = async (req, res) => {
     if (staffFilter !== "all") {
       query += ` AND LOWER(${pc === 1 ? 'name' : 't.name'})=LOWER($${pc})`;
       paramsCount.push(staffFilter);
+      pc++;
+    }
+
+    if (search) {
+      query += ` AND t.name ILIKE $${pc}`;
+      paramsCount.push(`%${search}%`);
+      pc++;
     }
 
     const result = await pool.query(query, paramsCount);

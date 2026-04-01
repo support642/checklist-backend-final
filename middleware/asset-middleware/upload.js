@@ -1,26 +1,29 @@
-// s3Upload.js
-import multer from "multer";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { Upload } from "@aws-sdk/lib-storage";
-import dotenv from "dotenv";
+import multer from 'multer';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
+import path from 'path';
+import dotenv from 'dotenv';
 
 dotenv.config();
 
-// 1️⃣ Initialize S3 client (AWS SDK v3)
+// 1. Initialize S3 client (AWS SDK v3)
 const s3 = new S3Client({
-  region: process.env.AWS_REGION, // e.g. "us-east-1"
+  region: process.env.AWS_REGION || 'us-east-1',
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
 });
 
-// 2️⃣ Multer setup (store in memory)
+// 2. Multer setup (store in memory)
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
 
-// 3️⃣ Upload function to S3
-export const uploadToS3 = async (file) => {
+// 3. Upload function to S3
+const uploadToS3 = async (file) => {
   try {
     console.log("🚀 uploadToS3 called with:", {
       name: file.originalname,
@@ -28,8 +31,11 @@ export const uploadToS3 = async (file) => {
       size: file.buffer?.length
     });
 
+    // Use either AWS_BUCKET_NAME or S3_BUCKET_NAME
+    const bucketName = process.env.AWS_BUCKET_NAME || process.env.S3_BUCKET_NAME;
+
     const params = {
-      Bucket: process.env.AWS_BUCKET_NAME,
+      Bucket: bucketName,
       Key: `uploads/${Date.now()}_${file.originalname}`,
       Body: file.buffer,
       ContentType: file.mimetype,
@@ -43,19 +49,19 @@ export const uploadToS3 = async (file) => {
     const result = await parallelUploads3.done();
     console.log("✅ Uploaded to S3:", result.Location || params.Key);
 
-    return `https://${process.env.AWS_BUCKET_NAME}.s3.amazonaws.com/${params.Key}`;
+    return result.Location || `https://${bucketName}.s3.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com/${params.Key}`;
   } catch (err) {
     console.error("❌ Error uploading to S3:", err);
     throw err;
   }
 };
 
-// 4️⃣ Upload document image (base64) to S3
-export const uploadDocumentImage = async (base64Data, fileName = null) => {
+// 4. Upload document image (base64) to S3
+const uploadDocumentImage = async (base64Data, fileName = null) => {
   if (!base64Data) return null;
 
   // Determine bucket name - use DOCUMENT_BUCKET_NAME if available, otherwise AWS_BUCKET_NAME
-  const bucketName = process.env.DOCUMENT_BUCKET_NAME || process.env.AWS_BUCKET_NAME;
+  const bucketName = process.env.DOCUMENT_BUCKET_NAME || process.env.AWS_BUCKET_NAME || process.env.S3_BUCKET_NAME;
 
   if (!bucketName) {
     throw new Error("S3 bucket name not configured. Please set DOCUMENT_BUCKET_NAME in .env");
@@ -109,5 +115,9 @@ export const uploadDocumentImage = async (base64Data, fileName = null) => {
   }
 };
 
+// Export middleware as default and helpers as members
+upload.uploadToS3 = uploadToS3;
+upload.uploadDocumentImage = uploadDocumentImage;
 
+export { uploadToS3, uploadDocumentImage };
 export default upload;

@@ -11,47 +11,67 @@ export const getPendingChecklist = async (req, res) => {
     const role = req.query.role;
     const department = req.query.department;
     const search = req.query.search || "";
+    const status = req.query.status || "all";
+    const frequency = req.query.frequency || "all";
+    const nameFilter = req.query.name || "all";
+    const divisionFilter = req.query.divisionFilter || "all";
+    const departmentFilter = req.query.departmentFilter || "all";
 
     const limit = 50;
     const offset = (page - 1) * limit;
     const queryParams = [limit, offset];
 
+    // Base filter for pending tasks
+    let where = `submission_date IS NULL`;
 
-    // Filter tasks based on their frequency window so pagination works correctly
-    // Daily tasks: today + 1 day, Weekly: +7 days, etc.
-    let where = `
-  submission_date IS NULL
-  AND DATE(task_start_date) <= CURRENT_DATE + 
-    CASE LOWER(COALESCE(frequency, 'daily'))
-      WHEN 'daily' THEN INTERVAL '1 day'
-      WHEN 'tertiary' THEN INTERVAL '3 days'
-      WHEN 'weekly' THEN INTERVAL '7 days'
-      WHEN 'fortnightly' THEN INTERVAL '14 days'
-      WHEN 'monthly' THEN INTERVAL '30 days'
-      WHEN 'quarterly' THEN INTERVAL '90 days'
-      WHEN 'yearly' THEN INTERVAL '365 days'
-      ELSE INTERVAL '1 day'
-    END
-`;
+    where += ` AND DATE(task_start_date) <= CURRENT_DATE + INTERVAL '1 day' `;
 
-    // Normalize role comparison
+    // ⭐ Status Filter (Today, Overdue, Upcoming)
+    if (status === "today") {
+      where += ` AND DATE(task_start_date) = CURRENT_DATE `;
+    } else if (status === "overdue") {
+      where += ` AND DATE(task_start_date) < CURRENT_DATE `;
+    } else if (status === "upcoming") {
+      where += ` AND DATE(task_start_date) > CURRENT_DATE `;
+    }
+
+    // ⭐ Frequency Filter
+    if (frequency !== "all") {
+      where += ` AND LOWER(frequency) = LOWER($${queryParams.length + 1}) `;
+      queryParams.push(frequency);
+    }
+
+    // ⭐ Name Filter
+    if (nameFilter !== "all") {
+      where += ` AND LOWER(name) = LOWER($${queryParams.length + 1}) `;
+      queryParams.push(nameFilter);
+    }
+
+    // ⭐ Division Filter
+    if (divisionFilter !== "all" && divisionFilter !== "undefined") {
+      where += ` AND LOWER(division) = LOWER($${queryParams.length + 1}) `;
+      queryParams.push(divisionFilter);
+    }
+
+    // ⭐ Department Filter
+    if (departmentFilter !== "all" && departmentFilter !== "undefined") {
+      where += ` AND LOWER(department) = LOWER($${queryParams.length + 1}) `;
+      queryParams.push(departmentFilter);
+    }
+
+    // Role-based baseline filtering
     const upRole = (role || "").toUpperCase();
     const requesterUnit = req.query.unit || "";
     const requesterDivision = req.query.division || "";
     const requesterDepartment = (req.query.department || department || "").trim();
 
-    // ⭐ SUPER_ADMIN → All
     if (upRole === "SUPER_ADMIN") {
-      // No additional filter
-    }
-    // ⭐ DIV_ADMIN → unit + division
-    else if (upRole === "DIV_ADMIN") {
+      // All access
+    } else if (upRole === "DIV_ADMIN") {
       if (requesterUnit && requesterDivision) {
         where += ` AND LOWER(unit) = LOWER('${requesterUnit.replace(/'/g, "''")}') AND LOWER(division) = LOWER('${requesterDivision.replace(/'/g, "''")}') `;
       }
-    }
-    // ⭐ ADMIN → unit + division + department
-    else if (upRole === "ADMIN") {
+    } else if (upRole === "ADMIN") {
       if (requesterUnit && requesterDivision && requesterDepartment) {
         const deptEscaped = requesterDepartment.replace(/'/g, "''");
         where += ` AND LOWER(unit) = LOWER('${requesterUnit.replace(/'/g, "''")}') AND LOWER(division) = LOWER('${requesterDivision.replace(/'/g, "''")}') AND LOWER(department) = LOWER('${deptEscaped}') `;
@@ -59,23 +79,23 @@ export const getPendingChecklist = async (req, res) => {
         const deptEscaped = requesterDepartment.replace(/'/g, "''");
         where += ` AND LOWER(department) = LOWER('${deptEscaped}') `;
       }
-    }
-    // ⭐ Normal users → own tasks
-    else if (username) {
-      where += ` AND LOWER(name) = LOWER($3) `;
+    } else if (username) {
+      // Normal users only see their own tasks
+      where += ` AND LOWER(name) = LOWER($${queryParams.length + 1}) `;
       queryParams.push(username);
     }
 
-    // ⭐ Add search filter if search term is provided
+    // ⭐ Search filter
     if (search.trim()) {
-      const searchLower = search.toLowerCase().replace(/'/g, "''"); // Escape single quotes
+      const searchParamIndex = queryParams.length + 1;
       where += ` AND (
-        LOWER(name) LIKE '%${searchLower}%' OR
-        LOWER(task_description) LIKE '%${searchLower}%' OR
-        LOWER(department) LIKE '%${searchLower}%' OR
-        LOWER(given_by) LIKE '%${searchLower}%' OR
-        CAST(task_id AS TEXT) LIKE '%${searchLower}%'
+        LOWER(name) LIKE $${searchParamIndex} OR
+        LOWER(task_description) LIKE $${searchParamIndex} OR
+        LOWER(department) LIKE $${searchParamIndex} OR
+        LOWER(given_by) LIKE $${searchParamIndex} OR
+        CAST(task_id AS TEXT) LIKE $${searchParamIndex}
       ) `;
+      queryParams.push(`%${search.toLowerCase()}%`);
     }
 
     const query = `
@@ -104,9 +124,12 @@ export const getPendingChecklist = async (req, res) => {
       FROM checklist
       WHERE ${where}
       ORDER BY 
-        CASE WHEN DATE(task_start_date) <= CURRENT_DATE THEN 0 ELSE 1 END,
-        ABS(DATE(task_start_date) - CURRENT_DATE)
-
+        CASE 
+          WHEN DATE(task_start_date) < CURRENT_DATE THEN 0
+          WHEN DATE(task_start_date) = CURRENT_DATE THEN 1
+          ELSE 2 
+        END,
+        task_start_date ASC
       LIMIT $1 OFFSET $2
     `;
 
@@ -184,52 +207,74 @@ export const getChecklistHistory = async (req, res) => {
 
     const limit = 50;
     const offset = (page - 1) * limit;
-
-    let where = `submission_date IS NOT NULL`;
-
-    const upRole = role ? role.toUpperCase() : "USER";
     const requesterUnit = req.query.unit;
     const requesterDivision = req.query.division;
+    const divisionFilter = req.query.divisionFilter;
+    const departmentFilter = req.query.departmentFilter;
+    const nameFilter = req.query.nameFilter;
 
-    // ⭐ SUPER_ADMIN → All
-    if (upRole === "SUPER_ADMIN" || upRole === "super_admin") {
-      // No filter
-    }
-    // ⭐ DIV_ADMIN → unit + division
-    else if (upRole === "DIV_ADMIN" || upRole === "div_admin") {
-      if (requesterUnit && requesterDivision) {
-        where += ` AND LOWER(unit) = LOWER('${requesterUnit.replace(/'/g, "''")}') AND LOWER(division) = LOWER('${requesterDivision.replace(/'/g, "''")}') `;
-      }
-    }
-    // ⭐ ADMIN → unit + division + department
-    else if (upRole === "ADMIN" || upRole === "admin") {
-      if (requesterUnit && requesterDivision && department) {
-        const deptEscaped = department.replace(/'/g, "''");
-        where += ` AND LOWER(unit) = LOWER('${requesterUnit.replace(/'/g, "''")}') AND LOWER(division) = LOWER('${requesterDivision.replace(/'/g, "''")}') AND LOWER(department) = LOWER('${deptEscaped}') `;
-      } else if (department) {
-        const deptEscaped = department.replace(/'/g, "''");
-        where += ` AND LOWER(department) = LOWER('${deptEscaped}') `;
-      }
-    }
-    // ⭐ Normal users → own tasks
-    else if (username) {
-      where += ` AND LOWER(name) = LOWER('${username.replace(/'/g, "''")}') `;
-    }
-
+    // Build WHERE clause
+    const whereConditions = [`submission_date IS NOT NULL`];
     const params = [limit, offset];
+    let paramIndex = 3; // $1=limit, $2=offset
+
+    // Access Control Filters
+    const upRole = role ? role.toUpperCase() : "USER";
+    if (upRole === "SUPER_ADMIN" || upRole === "super_admin") {
+      // No restricted filter
+    } else if (upRole === "DIV_ADMIN" || upRole === "div_admin") {
+      if (requesterUnit && requesterDivision) {
+        whereConditions.push(`LOWER(unit) = LOWER($${paramIndex++})`);
+        params.push(requesterUnit);
+        whereConditions.push(`LOWER(division) = LOWER($${paramIndex++})`);
+        params.push(requesterDivision);
+      }
+    } else if (upRole === "ADMIN" || upRole === "admin") {
+      if (requesterUnit && requesterDivision && department) {
+        whereConditions.push(`LOWER(unit) = LOWER($${paramIndex++})`);
+        params.push(requesterUnit);
+        whereConditions.push(`LOWER(division) = LOWER($${paramIndex++})`);
+        params.push(requesterDivision);
+        whereConditions.push(`LOWER(department) = LOWER($${paramIndex++})`);
+        params.push(department);
+      } else if (department) {
+        whereConditions.push(`LOWER(department) = LOWER($${paramIndex++})`);
+        params.push(department);
+      }
+    } else if (username) {
+      whereConditions.push(`LOWER(name) = LOWER($${paramIndex++})`);
+      params.push(username);
+    }
+
+    // Explicit UI Filters
+    if (divisionFilter && divisionFilter !== 'all') {
+      whereConditions.push(`LOWER(division) = LOWER($${paramIndex++})`);
+      params.push(divisionFilter);
+    }
+    if (departmentFilter && departmentFilter !== 'all') {
+      whereConditions.push(`LOWER(department) = LOWER($${paramIndex++})`);
+      params.push(departmentFilter);
+    }
+    if (nameFilter && nameFilter !== 'all') {
+      whereConditions.push(`LOWER(name) = LOWER($${paramIndex++})`);
+      params.push(nameFilter);
+    }
 
     if (search) {
-      where += ` AND (
-        LOWER(name) LIKE $3 OR 
-        LOWER(task_description) LIKE $3 OR 
-        LOWER(department) LIKE $3 OR 
-        LOWER(given_by) LIKE $3 OR
-        CAST(task_id AS TEXT) LIKE $3 OR
-        LOWER(unit) LIKE $3 OR
-        LOWER(division) LIKE $3
-      )`;
+      const searchPlaceholder = `$${paramIndex++}`;
+      whereConditions.push(`(
+        LOWER(name) LIKE ${searchPlaceholder} OR 
+        LOWER(task_description) LIKE ${searchPlaceholder} OR 
+        LOWER(department) LIKE ${searchPlaceholder} OR 
+        LOWER(given_by) LIKE ${searchPlaceholder} OR
+        CAST(task_id AS TEXT) LIKE ${searchPlaceholder} OR
+        LOWER(unit) LIKE ${searchPlaceholder} OR
+        LOWER(division) LIKE ${searchPlaceholder}
+      )`);
       params.push(`%${search.toLowerCase()}%`);
     }
+
+    const where = whereConditions.join(" AND ");
 
     const query = `
       SELECT 
@@ -301,27 +346,76 @@ export const updateChecklist = async (req, res) => {
         // ---------------------------------
         // 🔥🔥 FIX: IMAGE HANDLING
         // ---------------------------------
-        let finalImageUrl = null;
+        let finalImageUrls = [];
 
-        if (item.image && typeof item.image === "string") {
-          if (item.image.startsWith("data:image")) {
-            // Base64 → Buffer
-            const base64Data = item.image.split(";base64,").pop();
-            const buffer = Buffer.from(base64Data, "base64");
+        // Handle array of images
+        if (item.images && Array.isArray(item.images)) {
+          for (const imageStr of item.images) {
+            if (typeof imageStr === "string") {
+              if (imageStr.startsWith("data:")) {
+                const matches = imageStr.match(/^data:([a-zA-Z0-9-+\/.]+);base64,(.+)$/);
+                if (matches && matches.length === 3) {
+                  const mimeType = matches[1];
+                  const base64Data = matches[2];
+                  const buffer = Buffer.from(base64Data, "base64");
 
-            const fakeFile = {
-              originalname: `task_${item.taskId}_${Date.now()}.jpg`,
-              buffer,
-              mimetype: "image/jpeg",
-            };
+                  let extension = mimeType.split('/')[1] || "bin";
+                  if (mimeType.includes("jpeg") || mimeType.includes("jpg")) extension = "jpg";
+                  else if (mimeType.includes("pdf")) extension = "pdf";
+                  else if (mimeType.includes("word") || mimeType.includes("document")) extension = "docx";
+                  else if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) extension = "xlsx";
+                  else if (mimeType.includes("csv")) extension = "csv";
 
-            // Upload to S3
-            finalImageUrl = await uploadToS3(fakeFile);
+                  const fakeFile = {
+                    originalname: `task_${item.taskId}_${Date.now()}_${Math.floor(Math.random() * 1000)}.${extension}`,
+                    buffer,
+                    mimetype: mimeType,
+                  };
+
+                  const s3Url = await uploadToS3(fakeFile);
+                  if (s3Url) finalImageUrls.push(s3Url);
+                } else {
+                  finalImageUrls.push(imageStr);
+                }
+              } else {
+                finalImageUrls.push(imageStr);
+              }
+            }
+          }
+        } else if (item.image && typeof item.image === "string") {
+          // Legacy generic fallback if sending a single image string
+          if (item.image.startsWith("data:")) {
+            const matches = item.image.match(/^data:([a-zA-Z0-9-+\/.]+);base64,(.+)$/);
+            if (matches && matches.length === 3) {
+              const mimeType = matches[1];
+              const base64Data = matches[2];
+              const buffer = Buffer.from(base64Data, "base64");
+
+              let extension = mimeType.split('/')[1] || "bin";
+              if (mimeType.includes("jpeg") || mimeType.includes("jpg")) extension = "jpg";
+              else if (mimeType.includes("pdf")) extension = "pdf";
+              else if (mimeType.includes("word") || mimeType.includes("document")) extension = "docx";
+              else if (mimeType.includes("excel") || mimeType.includes("spreadsheet")) extension = "xlsx";
+              else if (mimeType.includes("csv")) extension = "csv";
+
+              const fakeFile = {
+                originalname: `task_${item.taskId}_${Date.now()}.${extension}`,
+                buffer,
+                mimetype: mimeType,
+              };
+
+              const s3Url = await uploadToS3(fakeFile);
+              if (s3Url) finalImageUrls.push(s3Url);
+            } else {
+              finalImageUrls.push(item.image);
+            }
           } else {
             // Already S3 URL or old string
-            finalImageUrl = item.image;
+            finalImageUrls.push(item.image);
           }
         }
+
+        const finalImageUrl = finalImageUrls.length > 0 ? finalImageUrls.join(',') : null;
 
         // ---------------------------------
         // 🔥 SAVE TO DATABASE

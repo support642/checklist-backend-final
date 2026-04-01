@@ -1,5 +1,5 @@
-// controllers/loginController.js
 import pool from "../config/db.js";
+import { randomUUID } from "crypto";
 
 // Map to store active SSE connections: username -> Response[]
 export const activeClients = new Map();
@@ -14,7 +14,7 @@ export const authStream = (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
-  res.flushHeaders(); 
+  res.flushHeaders();
 
   // Send an initial heartbeat to confirm connection
   res.write("data: connected\n\n");
@@ -34,12 +34,23 @@ export const authStream = (req, res) => {
   });
 };
 
-export const triggerUserLogout = (username) => {
-  const clients = activeClients.get(username);
-  if (clients && clients.length > 0) {
-    clients.forEach((client) => {
-      client.write("event: logout\ndata: {}\n\n");
-    });
+export const triggerUserLogout = async (username) => {
+  try {
+    // 1. Invalidate sessions in DB
+    await pool.query(
+      "UPDATE sessions SET is_active = false WHERE username = $1",
+      [username]
+    );
+
+    // 2. Trigger SSE logout event
+    const clients = activeClients.get(username);
+    if (clients && clients.length > 0) {
+      clients.forEach((client) => {
+        client.write("event: force_logout\ndata: {}\n\n");
+      });
+    }
+  } catch (err) {
+    console.error("Error in triggerUserLogout:", err);
   }
 };
 
@@ -53,7 +64,7 @@ export const loginUserController = async (req, res) => {
 
     // Query PostgreSQL
     const query = `
-      SELECT user_name, password, role, status, email_id, user_access, unit, division, department, system_access, page_access 
+      SELECT user_name, password, role, status, email_id, user_access, unit, division, department, system_access, page_access, subscription_access_system
       FROM users 
       WHERE user_name = $1 AND password = $2
       LIMIT 1
@@ -68,10 +79,12 @@ export const loginUserController = async (req, res) => {
 
     const user = rows[0];
 
-    // Check active status
-    if (user.status !== "active") {
-      return res.status(403).json({ error: "Your account is inactive. Contact admin." });
-    }
+    // Create session_id
+    const session_id = randomUUID();
+    await pool.query(
+      "INSERT INTO sessions (session_id, username, is_active) VALUES ($1, $2, TRUE)",
+      [session_id, user.user_name]
+    );
 
     return res.json({
       user_name: user.user_name,
@@ -82,7 +95,9 @@ export const loginUserController = async (req, res) => {
       division: user.division,
       department: user.department,
       system_access: user.system_access,
-      page_access: user.page_access
+      page_access: user.page_access,
+      subscription_access_system: user.subscription_access_system,
+      session_id: session_id
     });
 
   } catch (err) {

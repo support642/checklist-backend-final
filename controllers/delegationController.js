@@ -100,6 +100,10 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
     const requesterDivision = req.query.division;
     const requesterDepartment = req.query.department;
 
+    const divisionFilter = req.query.divisionFilter;
+    const departmentFilter = req.query.departmentFilter;
+    const nameFilter = req.query.nameFilter;
+
     if (upRole === "SUPER_ADMIN" || upRole === "super_admin") {
       // No filter
     } else if (upRole === "DIV_ADMIN" || upRole === "div_admin") {
@@ -117,6 +121,20 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
     } else {
       whereConditions.push(`dd.name = $${paramIndex++}`);
       params.push(username);
+    }
+
+    // Explicit UI Filters
+    if (divisionFilter && divisionFilter !== 'all') {
+      whereConditions.push(`LOWER(d.division) = LOWER($${paramIndex++})`);
+      params.push(divisionFilter);
+    }
+    if (departmentFilter && departmentFilter !== 'all') {
+      whereConditions.push(`LOWER(d.department) = LOWER($${paramIndex++})`);
+      params.push(departmentFilter);
+    }
+    if (nameFilter && nameFilter !== 'all') {
+      whereConditions.push(`LOWER(dd.name) = LOWER($${paramIndex++})`);
+      params.push(nameFilter);
     }
 
     const startDate = req.query.startDate;
