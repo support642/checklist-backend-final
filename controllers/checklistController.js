@@ -1,7 +1,7 @@
 import pool from "../config/db.js";
-
 import upload, { uploadToS3 } from "../middleware/s3Upload.js";
-import { sendWhatsAppMessage } from "../services/whatsappService.js";
+import { sendUrgentTaskEmail } from "../services/emailService.js";
+import whatsappService from "../services/whatsappService.js";
 // -----------------------------------------
 // 1️⃣ GET PENDING CHECKLIST
 export const getPendingChecklist = async (req, res) => {
@@ -490,9 +490,9 @@ export const adminDoneChecklist = async (req, res) => {
 };
 
 // -----------------------------------------
-// 5️⃣ SEND WHATSAPP NOTIFICATION (Admin Only)
+// 5️⃣ SEND EMAIL NOTIFICATION (Admin Only)
 // -----------------------------------------
-export const sendWhatsAppNotification = async (req, res) => {
+export const sendEmailNotification = async (req, res) => {
   try {
     const { items } = req.body;
 
@@ -505,65 +505,61 @@ export const sendWhatsAppNotification = async (req, res) => {
     for (const item of items) {
       const doerName = item.name;
 
-      // Look up doer's phone number from users table
+      // Look up doer's email & phone from users table
       const userResult = await pool.query(
-        "SELECT number FROM users WHERE user_name = $1",
-        [doerName],
+        "SELECT email_id, number FROM users WHERE user_name = $1",
+        [doerName]
       );
 
-      if (userResult.rows.length === 0 || !userResult.rows[0].number) {
+      if (userResult.rows.length === 0 || (!userResult.rows[0].email_id && !userResult.rows[0].number)) {
         results.push({
           name: doerName,
           success: false,
-          error: "Phone number not found",
+          error: "Contact info not found",
         });
         continue;
       }
 
-      const phoneNumber = userResult.rows[0].number;
+      const email = userResult.rows[0].email_id;
+      const phone = userResult.rows[0].number;
 
-      // Format date for message
+      // Format date
       const formatDate = (dateStr) => {
         if (!dateStr) return "N/A";
         try {
           const date = new Date(dateStr);
-          if (isNaN(date.getTime())) return dateStr;
-          const year = date.getFullYear();
-          const month = String(date.getMonth() + 1).padStart(2, "0");
-          const day = String(date.getDate()).padStart(2, "0");
-          const hours = String(date.getHours()).padStart(2, "0");
-          const minutes = String(date.getMinutes()).padStart(2, "0");
-          const seconds = String(date.getSeconds()).padStart(2, "0");
-          return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+          return date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
         } catch (e) {
           return dateStr;
         }
       };
 
-      // App link
-      const appLink = "https://checklist-frontend-eight.vercel.app";
+      // Send Email
+      let emailResult = { success: true };
+      if (email) {
+        emailResult = await sendUrgentTaskEmail(email, {
+          name: doerName,
+          taskId: item.task_id || "N/A",
+          description: item.task_description || "N/A",
+          dueDate: formatDate(item.task_start_date),
+          givenBy: item.given_by || "N/A"
+        });
+      }
 
-      // Create urgent task alert message
-      const message = `🚨 URGENT TASK ALERT 🚨
-
-Name: ${doerName}
-Task ID: ${item.task_id || "N/A"}
-Task: ${item.task_description || "N/A"}s
-Planned Date: ${formatDate(item.task_start_date)}
-Given By: ${item.given_by || "N/A"}
-
-📌 Please take immediate action and update once completed.
-
-🔗 *App Link:*
-${appLink}`;
-
-      // Send WhatsApp message
-      const result = await sendWhatsAppMessage(phoneNumber, message);
+      // Send WhatsApp
+      let waSuccess = true;
+      let waError = null;
+      if (phone) {
+        const waMessage = `🚨 *URGENT CHECKLIST ALERT* 🚨\n\nHello ${doerName},\n\nThe following checklist task requires your *immediate attention*:\n\n📌 Task ID: ${item.task_id || 'N/A'}\n📝 Task: ${item.task_description || 'N/A'}\n⏳ Planned Date: ${formatDate(item.task_start_date)}\n🧑‍💼 Given By: ${item.given_by || 'N/A'}\n\nClosure Link:\nhttps://checklist-frontend-nu.vercel.app\n\nPlease take immediate action.`;
+        const waResult = await whatsappService.sendWhatsAppMessage(phone, waMessage);
+        waSuccess = waResult.success;
+        waError = waResult.error;
+      }
 
       results.push({
         name: doerName,
-        success: result.success,
-        error: result.error || null,
+        success: emailResult.success || waSuccess,
+        error: emailResult.error || waError || null,
       });
     }
 
@@ -571,11 +567,11 @@ ${appLink}`;
     const failCount = results.filter((r) => !r.success).length;
 
     res.json({
-      message: `WhatsApp sent: ${successCount} success, ${failCount} failed`,
+      message: `Notifications sent: ${successCount} success, ${failCount} failed`,
       results,
     });
   } catch (err) {
-    console.error("❌ sendWhatsAppNotification Error:", err);
+    console.error("❌ sendEmailNotification Error:", err);
     res.status(500).json({ error: err.message });
   }
 };

@@ -1,6 +1,7 @@
 import pool from "../config/db.js";
 import { uploadToS3 } from "../middleware/s3Upload.js";
-import { sendWhatsAppMessage } from "../services/whatsappService.js";
+import { sendUrgentTaskEmail } from "../services/emailService.js";
+import whatsappService from "../services/whatsappService.js";
 
 // -----------------------------------------
 // 1️⃣ GET PENDING MAINTENANCE TASKS
@@ -644,6 +645,12 @@ export const updateUniqueMaintenanceTask = async (req, res) => {
             return res.status(400).json({ error: "Missing task data" });
         }
 
+         // Convert part_name to array if it's a comma-separated string (column is TEXT[])
+        const partNameArray = typeof updatedTask.part_name === 'string'
+            ? updatedTask.part_name.split(',').map(p => p.trim()).filter(Boolean)
+            : (Array.isArray(updatedTask.part_name) ? updatedTask.part_name : []);
+
+
         const query = `
           UPDATE maintenance_tasks
           SET
@@ -657,7 +664,7 @@ export const updateUniqueMaintenanceTask = async (req, res) => {
             require_attachment = $8,
             machine_name = $9,
             part_name = $10,
-            machine_area = $11,
+            part_area = $11,
             duration = $12,
             status = $13,
             machine_department = $14,
@@ -679,7 +686,7 @@ export const updateUniqueMaintenanceTask = async (req, res) => {
             updatedTask.enable_reminder,  // The frontend passes enable_reminder
             updatedTask.require_attachment,
             updatedTask.machine_name,     // specific to maintenance task edits
-            updatedTask.part_name,
+            partNameArray,
             updatedTask.part_area,
             updatedTask.duration,
             updatedTask.status || originalTask.status, // Fallback if status is empty string from "Select Status" option
@@ -747,5 +754,92 @@ export const getMaintenanceUniqueCount = async (req, res) => {
     } catch (error) {
         console.error("❌ Error fetching unique maintenance task count:", error);
         res.status(500).json({ error: "Internal Server Error" });
+    }
+};
+
+// -----------------------------------------
+// 13️⃣ SEND MAINTENANCE NOTIFICATION (Admin Only)
+// -----------------------------------------
+export const sendMaintenanceNotification = async (req, res) => {
+    try {
+        const { items } = req.body;
+
+        if (!items || !Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ error: "No items provided" });
+        }
+
+        const results = [];
+
+        for (const item of items) {
+            const doerName = item.name;
+
+            // Look up doer's email & phone from users table
+            const userResult = await pool.query(
+                "SELECT email_id, number FROM users WHERE user_name = $1",
+                [doerName]
+            );
+
+            if (userResult.rows.length === 0 || (!userResult.rows[0].email_id && !userResult.rows[0].number)) {
+                results.push({
+                    name: doerName,
+                    success: false,
+                    error: "Contact info not found",
+                });
+                continue;
+            }
+
+            const email = userResult.rows[0].email_id;
+            const phone = userResult.rows[0].number;
+
+            // Format date
+            const formatDate = (dateStr) => {
+                if (!dateStr) return "N/A";
+                try {
+                    const date = new Date(dateStr);
+                    return date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+                } catch (e) {
+                    return dateStr;
+                }
+            };
+
+            // Send Email
+            let emailResult = { success: true };
+            if (email) {
+                emailResult = await sendUrgentTaskEmail(email, {
+                    name: doerName,
+                    taskId: item.task_id || "N/A",
+                    description: item.task_description || "N/A",
+                    dueDate: formatDate(item.task_start_date),
+                    givenBy: item.given_by || "N/A"
+                });
+            }
+
+            // Send WhatsApp
+            let waSuccess = true;
+            let waError = null;
+            if (phone) {
+                const waMessage = `🚨 *URGENT MAINTENANCE ALERT* 🚨\n\nHello ${doerName},\n\nThe following maintenance task requires your *immediate attention*:\n\n📌 Task ID: ${item.task_id || 'N/A'}\n📝 Task: ${item.task_description || 'N/A'}\n⏳ Planned Date: ${formatDate(item.task_start_date)}\n🧑‍💼 Given By: ${item.given_by || 'N/A'}\n\nClosure Link:\nhttps://checklist-frontend-nu.vercel.app\n\nPlease take immediate action.`;
+                const waResult = await whatsappService.sendWhatsAppMessage(phone, waMessage);
+                waSuccess = waResult.success;
+                waError = waResult.error;
+            }
+
+            results.push({
+                name: doerName,
+                success: emailResult.success || waSuccess,
+                error: emailResult.error || waError || null,
+            });
+        }
+
+        const successCount = results.filter((r) => r.success).length;
+        const failCount = results.filter((r) => !r.success).length;
+
+        res.json({
+            message: `Notifications sent: ${successCount} success, ${failCount} failed`,
+            results,
+        });
+    } catch (err) {
+        console.error("❌ sendMaintenanceNotification Error:", err);
+        res.status(500).json({ error: err.message });
     }
 };

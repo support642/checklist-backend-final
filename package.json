@@ -16,7 +16,8 @@
     "express": "^5.1.0",
     "multer": "^2.0.2",
     "multer-s3": "^3.0.1",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "resend": "^6.10.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

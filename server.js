@@ -29,7 +29,7 @@ import subscriptionRoutes from "./routes/doc-routes/subscriptionRoutes.js";
 import subscriptionApprovalRoutes from "./routes/doc-routes/susbcriptionApprovalRoutes.js";
 import documentRoutes from "./routes/doc-routes/document-routes/document.routes.js";
 import userRoutes from "./routes/doc-routes/userRoutes.js";
-import documentShareRoutes from "./routes/doc-routes/documentShare.routes.js";
+
 
 // Asset Module Routes
 import assetProductRoutes from "./routes/asset-routes/productRoutes.js";
@@ -84,7 +84,7 @@ app.use("/api/subscription-payment", subscriptionPaymentRoutes);
 app.use("/api/subscription", subscriptionRoutes);
 app.use("/api/subscription-approval", subscriptionApprovalRoutes);
 app.use("/api/documents", documentRoutes);
-app.use("/api/document-share", documentShareRoutes);
+
 app.use("/api/users", userRoutes);
 
 // ASSET MODULE ROUTES

@@ -1,5 +1,7 @@
 import * as documentService from "../../../services/doc-services/document-services/document-service.js";
 import { uploadDocumentImage } from "../../../middleware/s3Upload.js";
+import { sendDocumentShareEmail } from "../../../services/emailService.js";
+import { documentShareService } from "../../../services/doc-services/documentShare.service.js";
 
 // Create document
 export async function createDocument(req, res) {
@@ -96,7 +98,7 @@ export async function getDocumentById(req, res) {
 
 // Update document
 export async function updateDocument(req, res) {
-    if(req.user.role !== "admin") {
+    if(!["super_admin", "admin", "div_admin"].includes((req.user.role || "").toLowerCase())) {
         return res.status(403).json({
             message: "Access denied"
         });
@@ -165,5 +167,79 @@ export async function getDocumentStats(req, res) {
     } catch (err) {
         console.error("Get Document Stats Error:", err);
         res.status(500).json({ error: "Failed to fetch document stats" });
+    }
+}
+
+// Share document via email/WhatsApp
+export async function shareDocumentEmail(req, res) {
+    try {
+        const { recipientName, recipientEmail, recipientPhone, message, documentId } = req.body;
+
+        if ((!recipientEmail && !recipientPhone) || !documentId) {
+            return res.status(400).json({ error: "Recipient contact and document ID are required" });
+        }
+
+        // Fetch document details
+        const document = await documentService.getDocumentById(documentId);
+
+        if (!document) {
+            return res.status(404).json({ error: "Document not found" });
+        }
+
+        const shareResults = { email: null, whatsapp: null };
+
+        // 📧 Send the email
+        if (recipientEmail) {
+            try {
+                const emailResult = await sendDocumentShareEmail(recipientEmail, {
+                    recipientName: recipientName || "User",
+                    documentName: document.document_name,
+                    message: message || "Please check this document.",
+                    documentUrl: document.image // This is the S3 URL
+                });
+                shareResults.email = emailResult.success;
+            } catch (err) {
+                console.error("Email Share Error:", err);
+                shareResults.email = false;
+            }
+        }
+
+        // 📱 Send WhatsApp
+        if (recipientPhone) {
+            try {
+                // Clean phone number
+                let cleanPhone = recipientPhone.replace(/[\s\-\+]/g, "");
+                if (cleanPhone.length === 10) cleanPhone = `91${cleanPhone}`;
+
+                const docDetails = {
+                    documentType: document.document_type || '',
+                    category: document.category || '',
+                    companyName: document.person_name || document.company_department || '',
+                    needsRenewal: document.need_renewal === 'yes' ? 'Yes' : 'No',
+                    renewalDate: document.renewal_date || '-',
+                };
+
+                const waResult = await documentShareService(
+                    cleanPhone,
+                    document.document_name,
+                    document.image || "",
+                    message || `Hello, sharing "${document.document_name}"`,
+                    docDetails
+                );
+                shareResults.whatsapp = true;
+            } catch (err) {
+                console.error("WhatsApp Share Error:", err);
+                shareResults.whatsapp = false;
+            }
+        }
+
+        res.json({ 
+            success: true, 
+            message: "Sharing processed", 
+            results: shareResults 
+        });
+    } catch (err) {
+        console.error("Share Document Email Error:", err);
+        res.status(500).json({ error: "Failed to share document via email", details: err.message });
     }
 }

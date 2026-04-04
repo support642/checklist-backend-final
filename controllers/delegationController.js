@@ -1,6 +1,7 @@
 import pool from "../config/db.js";
 import { uploadToS3 } from "../middleware/s3Upload.js";
-import { sendWhatsAppMessage, sendDelegationStatusUpdateNotification } from "../services/whatsappService.js";
+import { sendDelegationStatusUpdateEmail, sendUrgentTaskEmail } from "../services/emailService.js";
+import whatsappService from "../services/whatsappService.js";
 
 
 /* ------------------------------------------------------
@@ -165,7 +166,7 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
     query += ` ORDER BY dd.created_at DESC;`;
 
     const { rows } = await pool.query(query, params);
-    
+
     const totalCount = rows.length > 0 ? parseInt(rows[0].total_count) : 0;
     const approvedCount = rows.length > 0 ? parseInt(rows[0].approved_count) : 0;
 
@@ -419,20 +420,29 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
         updated_in_main_table: updated.rows[0],
       });
 
-      // 📲 WhatsApp Notification for Admin (9637655555) for Done, Partial Done, and Extend
-      const lowerStatus = (task.status || "").toString().toLowerCase().trim();
-      console.log(`🔍 Checking notification for Task ID ${task.task_id}: Detected status "${lowerStatus}"`);
+      // 📲 Email Notification for Admin for Done, Partial Done, and Extend
+      const lowerStatus = (statusForDelegation || "").toString().toLowerCase().trim();
 
-      if (lowerStatus === "done" || lowerStatus === "partial_done" || lowerStatus === "extend") {
+      if (["done", "partial_done", "extend"].includes(lowerStatus)) {
         try {
-          console.log(`📲 Sending WhatsApp status notification (${lowerStatus}) to Admin for Task ID: ${task.task_id}`);
-          await sendDelegationStatusUpdateNotification(task, lowerStatus);
+          // Fetch Admin and Super Admin emails
+          const adminResult = await client.query(
+            "SELECT email_id FROM users WHERE role IN ('Admin', 'Super Admin') AND email_id IS NOT NULL"
+          );
+          const adminEmails = adminResult.rows.map(r => r.email_id);
+
+          if (adminEmails.length > 0) {
+            console.log(`📧 Sending Email status notification (${lowerStatus}) to Admins for Task ID: ${task.task_id}`);
+            await sendDelegationStatusUpdateEmail(adminEmails, task, lowerStatus);
+
+            // TODO: The whatsappService currently hardcodes the admin number (9637655555).
+            // We will update this later to fetch dynamically.
+            console.log(`📱 Sending WhatsApp status notification for Task ID: ${task.task_id}`);
+            await whatsappService.sendDelegationStatusUpdateNotification(task, lowerStatus);
+          }
         } catch (notifErr) {
-          console.error("❌ Notification error:", notifErr);
-          // Don't fail the whole transaction if notification fails
+          console.error("❌ Email notification error:", notifErr);
         }
-      } else {
-        console.log(`ℹ️ No notification triggered for status: "${lowerStatus}"`);
       }
     }
 
@@ -450,6 +460,91 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
     return res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+};
+
+/* ------------------------------------------------------
+   SEND EMAIL NOTIFICATION FOR DELEGATION (Admin Only)
+------------------------------------------------------ */
+export const sendDelegationEmailNotification = async (req, res) => {
+  try {
+    const { items } = req.body;
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: 'No items provided' });
+    }
+
+    console.log(`📧 Processing ${items.length} delegation Email notifications...`);
+
+    const results = [];
+
+    for (const item of items) {
+      const doerName = item.name;
+
+      // Look up email & phone from users table
+      const userResult = await pool.query(
+        'SELECT email_id, number FROM users WHERE user_name = $1',
+        [doerName]
+      );
+
+      if (userResult.rows.length === 0 || (!userResult.rows[0].email_id && !userResult.rows[0].number)) {
+        console.log(`⚠️ No email/phone found for: ${doerName}`);
+        results.push({ name: doerName, success: false, error: 'Contact info not found' });
+        continue;
+      }
+
+      const email = userResult.rows[0].email_id;
+      const phone = userResult.rows[0].number;
+
+      // Format date
+      const formatDate = (dateStr) => {
+        if (!dateStr) return 'N/A';
+        try {
+          const date = new Date(dateStr);
+          return date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+        } catch (e) { return dateStr; }
+      };
+
+      // Send Email
+      let emailResult = { success: true };
+      if (email) {
+        emailResult = await sendUrgentTaskEmail(email, {
+          name: doerName,
+          taskId: item.task_id || 'N/A',
+          description: item.task_description || 'N/A',
+          dueDate: formatDate(item.planned_date || item.task_start_date),
+          givenBy: item.given_by || 'N/A'
+        });
+      }
+
+      // Send WhatsApp
+      let waSuccess = true;
+      let waError = null;
+      if (phone) {
+        const waMessage = `🚨 *URGENT TASK ALERT* 🚨\n\nHello ${doerName},\n\nThe following task requires your *immediate attention*:\n\n📌 Task ID: ${item.task_id || 'N/A'}\n📝 Task: ${item.task_description || 'N/A'}\n⏳ Planned Date: ${formatDate(item.planned_date || item.task_start_date)}\n🧑‍💼 Given By: ${item.given_by || 'N/A'}\n\nClosure Link:\nhttps://checklist-frontend-nu.vercel.app\n\nPlease take immediate action.`;
+        const waResult = await whatsappService.sendWhatsAppMessage(phone, waMessage);
+        waSuccess = waResult.success;
+        waError = waResult.error;
+      }
+
+      results.push({
+        name: doerName,
+        success: emailResult.success || waSuccess,
+        error: emailResult.error || waError || null
+      });
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+
+    res.json({
+      message: `Emails sent: ${successCount} success, ${failCount} failed`,
+      results
+    });
+
+  } catch (err) {
+    console.error("❌ sendDelegationEmailNotification Error:", err);
+    res.status(500).json({ error: err.message });
   }
 };
 
@@ -493,100 +588,7 @@ export const adminDoneDelegation = async (req, res) => {
 };
 
 
-/* ------------------------------------------------------
-   SEND WHATSAPP NOTIFICATION FOR DELEGATION (Admin)
------------------------------------------------------- */
-export const sendDelegationWhatsAppNotification = async (req, res) => {
-  try {
-    const { items } = req.body; // Array of selected delegation items
 
-    if (!items || items.length === 0) {
-      return res.status(400).json({ error: 'No items provided' });
-    }
-
-    console.log(`📱 Processing ${items.length} delegation WhatsApp notifications...`);
-
-    const results = [];
-
-    for (const item of items) {
-      const doerName = item.name;
-
-      // Look up phone number from users table
-      const userResult = await pool.query(
-        'SELECT number FROM users WHERE user_name = $1',
-        [doerName]
-      );
-
-      if (userResult.rows.length === 0 || !userResult.rows[0].number) {
-        console.log(`⚠️ No phone number found for: ${doerName}`);
-        results.push({
-          name: doerName,
-          success: false,
-          error: 'Phone number not found'
-        });
-        continue;
-      }
-
-      const phoneNumber = userResult.rows[0].number;
-
-      // Format date for message
-      const formatDate = (dateStr) => {
-        if (!dateStr) return 'N/A';
-        try {
-          const date = new Date(dateStr);
-          if (isNaN(date.getTime())) return dateStr;
-          const year = date.getFullYear();
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          const hours = String(date.getHours()).padStart(2, '0');
-          const minutes = String(date.getMinutes()).padStart(2, '0');
-          const seconds = String(date.getSeconds()).padStart(2, '0');
-          return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-        } catch (e) {
-          return dateStr;
-        }
-      };
-
-      // App link
-      const appLink = 'https://checklist-frontend-eight.vercel.app';
-
-      // Create urgent task alert message
-      const message = `🚨 URGENT TASK ALERT 🚨
-
-Name: ${doerName}
-Task ID: ${item.task_id || 'N/A'}
-Task: ${item.task_description || 'N/A'}
-Planned Date: ${formatDate(item.planned_date || item.task_start_date)}
-Given By: ${item.given_by || 'N/A'}
-
-📌 Please take immediate action and update once completed.
-
-🔗 *App Link:*
-${appLink}`;
-
-      // Send WhatsApp message
-      const result = await sendWhatsAppMessage(phoneNumber, message);
-
-      results.push({
-        name: doerName,
-        success: result.success,
-        error: result.error || null
-      });
-    }
-
-    const successCount = results.filter(r => r.success).length;
-    const failCount = results.filter(r => !r.success).length;
-
-    res.json({
-      message: `WhatsApp sent: ${successCount} success, ${failCount} failed`,
-      results
-    });
-
-  } catch (err) {
-    console.error("❌ sendDelegationWhatsAppNotification Error:", err);
-    res.status(500).json({ error: err.message });
-  }
-};
 
 
 /* ------------------------------------------------------

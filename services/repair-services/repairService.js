@@ -1,4 +1,24 @@
 import pool from "../../config/db.js";
+import { sendRepairTicketEmail } from "../emailService.js";
+import whatsappService from "../../services/whatsappService.js";
+
+/**
+ * Helper to fetch user contact info by username
+ */
+async function getUserContactInfo(username) {
+  if (!username) return { email: null, phone: null };
+  try {
+    const query = 'SELECT email_id, number FROM users WHERE user_name = $1 LIMIT 1';
+    const { rows } = await pool.query(query, [username]);
+    return {
+      email: rows[0]?.email_id || null,
+      phone: rows[0]?.number || null
+    };
+  } catch (err) {
+    console.error(`Error fetching contact info for user ${username}:`, err);
+    return { email: null, phone: null };
+  }
+}
 
 /**
  * Create a new repair task
@@ -53,30 +73,90 @@ export async function createRepairRequest(repairData) {
   ];
 
   const { rows } = await pool.query(query, values);
-  return rows[0];
+  const newRepair = rows[0];
+
+  // --- Notification Logic (Email + WhatsApp) ---
+  if (newRepair) {
+    try {
+      const emailRecipients = [];
+      const phoneRecipients = [];
+      
+      // Fetch contact info for Assigned Person
+      if (assigned_person) {
+        const { email, phone } = await getUserContactInfo(assigned_person);
+        if (email) emailRecipients.push(email);
+        if (phone) phoneRecipients.push(phone);
+      }
+
+      // Fetch contact info for Creator (filled_by)
+      if (filled_by) {
+        const { email, phone } = await getUserContactInfo(filled_by);
+        if (email && !emailRecipients.includes(email)) {
+          emailRecipients.push(email);
+        }
+        if (phone && !phoneRecipients.includes(phone)) {
+           phoneRecipients.push(phone);
+        }
+      }
+
+      const repairDetails = {
+        ticketId: newRepair.id,
+        machineName: newRepair.machine_name,
+        issueDescription: newRepair.issue_description,
+        assignedPerson: newRepair.assigned_person || 'Unassigned',
+        filledBy: newRepair.filled_by || 'Unknown'
+      };
+
+      // 📧 Send Email
+      if (emailRecipients.length > 0) {
+        console.log(`📧 Sending repair email notification to: ${emailRecipients.join(', ')}`);
+        await sendRepairTicketEmail(emailRecipients, repairDetails);
+      }
+
+      // 📱 Send WhatsApp
+      if (phoneRecipients.length > 0) {
+        console.log(`📱 Sending repair WhatsApp notification to: ${phoneRecipients.join(', ')}`);
+        const waMessage = `🛠️ *NEW REPAIR TICKET* 🛠️\n\nA new repair request has been created:\n\n📌 Ticket ID: ${repairDetails.ticketId}\n⚙️ Machine: ${repairDetails.machineName}\n📝 Issue: ${repairDetails.issueDescription}\n👤 Assigned to: ${repairDetails.assignedPerson}\n👤 Filed by: ${repairDetails.filledBy}\n\nPlease take necessary actions.`;
+        
+        for (const phone of phoneRecipients) {
+           await whatsappService.sendWhatsAppMessage(phone, waMessage);
+        }
+      }
+    } catch (notifErr) {
+      // Don't fail the whole request if notifications fail, just log it
+      console.error("Failed to send repair notifications:", notifErr);
+    }
+  }
+
+  return newRepair;
 }
 
 /**
  * Get all repair tasks with optional filters
  */
 export async function getAllRepairRequests(filters = {}) {
-  const { 
-    status, 
+  const {
+    status,
     status_exclude,
-    assigned_person, 
-    machine_name, 
-    filled_by, 
-    machine_department, 
+    assigned_person,
+    machine_name,
+    filled_by,
+    machine_department,
     machine_division,
     currentUser // { username, role }
   } = filters;
-  
+
   let query = `SELECT * FROM repair_tasks WHERE 1=1`;
   const values = [];
   let paramIdx = 1;
 
   // Role-based visibility filtering
-  if (currentUser && currentUser.role !== 'super_admin') {
+  if (currentUser && currentUser.role === 'user') {
+    // Regular users only see requests assigned to them
+    query += ` AND assigned_person = $${paramIdx++}`;
+    values.push(currentUser.username);
+  } else if (currentUser && !['super_admin'].includes(currentUser.role)) {
+    // admin / div_admin see requests they filed or are assigned to
     query += ` AND (filled_by = $${paramIdx++} OR assigned_person = $${paramIdx++})`;
     values.push(currentUser.username, currentUser.username);
   }
@@ -92,7 +172,7 @@ export async function getAllRepairRequests(filters = {}) {
       values.push(status);
     }
   }
-  
+
   if (status_exclude) {
     // If status_exclude is a comma-separated string, handle it
     const excludes = status_exclude.split(',');

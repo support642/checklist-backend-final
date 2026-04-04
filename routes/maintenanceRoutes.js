@@ -8,7 +8,8 @@ import {
     getUniqueMaintenanceTasks,
     updateUniqueMaintenanceTask,
     deleteUniqueMaintenanceTasks,
-    getMaintenanceUniqueCount
+    getMaintenanceUniqueCount,
+    sendMaintenanceNotification
 } from "../controllers/maintenanceController.js";
 const router = express.Router();
 
@@ -38,5 +39,8 @@ router.post("/delete-unique", deleteUniqueMaintenanceTasks);
 
 // POST get unique maintenance task count
 router.post("/unique-count", getMaintenanceUniqueCount);
+
+// POST send maintenance notification
+router.post("/send-notification", sendMaintenanceNotification);
 
 export default router;

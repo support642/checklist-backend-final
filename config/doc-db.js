@@ -5,11 +5,11 @@ dotenv.config();
 const { Pool } = pg;
 
 const docPool = new Pool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DOC_DB_NAME,
-  port: process.env.DB_PORT,
+  host: process.env.DB_HOST?.trim(),
+  user: process.env.DB_USER?.trim(),
+  password: process.env.DB_PASSWORD?.trim(),
+  database: process.env.DOC_DB_NAME?.trim(),
+  port: process.env.DB_PORT?.trim(),
   ssl: { rejectUnauthorized: false }, // required for AWS RDS
 });
 

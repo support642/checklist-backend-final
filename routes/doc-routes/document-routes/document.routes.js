@@ -28,6 +28,9 @@ router.get("/:id", authMiddleware, documentController.getDocumentById);
 // Update document
 router.put("/:id", authMiddleware, documentController.updateDocument);
 
+// Share document via email
+router.post("/share-email", authMiddleware, documentController.shareDocumentEmail);
+
 // Delete document (soft delete)-- "OBSOLETE"
 // router.delete("/:id", authMiddleware, documentController.deleteDocument);
 

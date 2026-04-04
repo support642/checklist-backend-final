@@ -9,6 +9,13 @@ const PHONE_ID = process.env.MAYTAPI_PHONE_ID;
 const API_TOKEN = process.env.MAYTAPI_API_TOKEN;
 
 /**
+ * GLOBAL TOGGLE TO DISCONNECT WHATSAPP SERVICE
+ * Set to true to disable all outgoing WhatsApp messages.
+ * Set to false to enable the service when Maytapi is configured.
+ */
+const IS_WHATSAPP_DISCONNECTED = true;
+
+/**
  * Format phone number for WhatsApp
  * Ensures the number includes country code (defaults to India +91)
  */
@@ -63,6 +70,12 @@ const formatDate = (dateStr) => {
  */
 export const sendWhatsAppMessage = async (phoneNumber, message) => {
   try {
+    // Global Disconnect Check
+    if (IS_WHATSAPP_DISCONNECTED) {
+      console.log('🔇 WhatsApp service is currently DISCONNECTED. Message skipped.');
+      return { success: true, message: 'WhatsApp service is temporarily disconnected' };
+    }
+
     // Validate configuration
     if (!PRODUCT_ID || !PHONE_ID || !API_TOKEN) {
       console.error('❌ Maytapi configuration missing in .env');
@@ -121,7 +134,7 @@ export const sendTaskAssignmentNotification = async (phoneNumber, taskDetails) =
     : '🔔 REMINDER: CHECKLIST TASK*';
   
   // App link for task completion
-  const appLink = 'https://checklist-frontend-eight.vercel.app';
+  const appLink = 'https://checklist-frontend-nu.vercel.app';
   
   const message = `${header}
 
@@ -172,7 +185,7 @@ export const sendDelegationStatusUpdateNotification = async (taskDetails, update
     statusText = 'Extended';
   }
 
-  const appLink = 'https://checklist-frontend-eight.vercel.app';
+  const appLink = 'https://checklist-frontend-nu.vercel.app';
   
   const message = `${statusHeader}
 

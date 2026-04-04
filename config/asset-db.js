@@ -5,11 +5,11 @@ const { Pool } = pg;
 dotenv.config();
 
 const pool = new Pool({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.AM_DB_NAME,
-    password: process.env.DB_PASSWORD,
-    port: process.env.DB_PORT,
+    user: process.env.DB_USER?.trim(),
+    host: process.env.DB_HOST?.trim(),
+    database: process.env.AM_DB_NAME?.trim(),
+    password: process.env.DB_PASSWORD?.trim(),
+    port: parseInt(process.env.DB_PORT?.trim() || "5432"),
     ssl: { rejectUnauthorized: false },
 });
 
