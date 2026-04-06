@@ -153,7 +153,7 @@ ${appLink}
 Please make sure the task is completed before the deadline. For any assistance, feel free to reach out.
 
 Best regards,
-Shri Shyam Group.`;
+Rama Udyog Group.`;
 
   return await sendWhatsAppMessage(phoneNumber, message);
 };
