@@ -3,10 +3,9 @@ import pool from "../config/db.js";
 export const sessionMiddleware = async (req, res, next) => {
   // Normalize path to remove duplicate slashes (e.g. /api//login) which happens often on Vercel deployments
   const normalizedPath = req.path.replace(/\/+/g, '/');
-  
-  const isExcluded = normalizedPath.endsWith("/login") || 
-                     normalizedPath.endsWith("/login/stream") || 
-                     normalizedPath.startsWith("/api/login");
+
+  const isExcluded = normalizedPath.endsWith("/login") ||
+    normalizedPath.endsWith("/login/stream");
 
   if (isExcluded) {
     return next();
