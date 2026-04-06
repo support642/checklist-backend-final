@@ -10,9 +10,20 @@ import axios from "axios";
  */
 
 export const documentShareService = async (phone, documentName, documentUrl, message, docDetails = {}) => {
-    const productId = process.env.WHATSAPP_PRODUCT_ID;
-    const phoneId = process.env.WHATSAPP_PHONE_ID;
-    const apiToken = process.env.WHATSAPP_API_TOKEN;
+    /**
+     * GLOBAL TOGGLE TO DISCONNECT WHATSAPP SERVICE
+     * Set to true to disable all outgoing WhatsApp messages.
+     */
+    const IS_WHATSAPP_DISCONNECTED = true;
+
+    if (IS_WHATSAPP_DISCONNECTED) {
+        console.log('🔇 WhatsApp service is currently DISCONNECTED. Document share message skipped.');
+        return { success: true, message: 'WhatsApp service is temporarily disconnected' };
+    }
+
+    const productId = process.env.MAYTAPI_PRODUCT_ID;
+    const phoneId = process.env.MAYTAPI_PHONE_ID;
+    const apiToken = process.env.MAYTAPI_API_TOKEN;
 
     if (!productId || !phoneId || !apiToken) {
         throw new Error("Maytapi credentials not configured. Check WHATSAPP_PRODUCT_ID, WHATSAPP_PHONE_ID, and WHATSAPP_API_TOKEN in .env");
