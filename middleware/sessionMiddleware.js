@@ -1,9 +1,14 @@
 import pool from "../config/db.js";
 
 export const sessionMiddleware = async (req, res, next) => {
-  // Exclude login and SSE stream from session check
-  const excludedPaths = ["/api/login", "/api/login/stream"];
-  if (excludedPaths.some(path => req.path.startsWith(path))) {
+  // Normalize path to remove duplicate slashes (e.g. /api//login) which happens often on Vercel deployments
+  const normalizedPath = req.path.replace(/\/+/g, '/');
+  
+  const isExcluded = normalizedPath.endsWith("/login") || 
+                     normalizedPath.endsWith("/login/stream") || 
+                     normalizedPath.startsWith("/api/login");
+
+  if (isExcluded) {
     return next();
   }
 

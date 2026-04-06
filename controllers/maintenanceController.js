@@ -449,7 +449,7 @@ export const adminDoneMaintenance = async (req, res) => {
 
         for (const item of items) {
             // item must have task_id
-             await client.query(sql, [item.task_id, item.remarks || ""]);
+            await client.query(sql, [item.task_id, item.remarks || ""]);
         }
 
         await client.query("COMMIT");
@@ -645,7 +645,7 @@ export const updateUniqueMaintenanceTask = async (req, res) => {
             return res.status(400).json({ error: "Missing task data" });
         }
 
-         // Convert part_name to array if it's a comma-separated string (column is TEXT[])
+        // Convert part_name to array if it's a comma-separated string (column is TEXT[])
         const partNameArray = typeof updatedTask.part_name === 'string'
             ? updatedTask.part_name.split(',').map(p => p.trim()).filter(Boolean)
             : (Array.isArray(updatedTask.part_name) ? updatedTask.part_name : []);
