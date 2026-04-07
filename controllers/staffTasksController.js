@@ -47,7 +47,7 @@ export const getStaffTasks = async (req, res) => {
 
     if (userRole === "SUPER_ADMIN" || !userRole) {
       staffQuery = `
-        SELECT DISTINCT t.name, u.department, u.division
+        SELECT DISTINCT t.name, u.department, u.division, u.employee_id, u.designation
         FROM ${table} t
         LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
         WHERE t.name IS NOT NULL
@@ -57,7 +57,7 @@ export const getStaffTasks = async (req, res) => {
       `;
     } else {
       staffQuery = `
-        SELECT DISTINCT t.name, u.department, u.division
+        SELECT DISTINCT t.name, u.department, u.division, u.employee_id, u.designation
         FROM ${table} t
         JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
         WHERE t.name IS NOT NULL
@@ -137,7 +137,9 @@ export const getStaffTasks = async (req, res) => {
     const paginatedStaff = staffResult.rows.map(r => ({
       name: r.name || r.t_name,
       department: r.department || "N/A",
-      division: r.division || "N/A"
+      division: r.division || "N/A",
+      employee_id: r.employee_id || "—",
+      designation: r.designation || "—"
     }));
 
     if (paginatedStaff.length === 0) {
@@ -240,6 +242,8 @@ export const getStaffTasks = async (req, res) => {
         name: staffName,
         department: staffObj.department,
         division: staffObj.division,
+        employee_id: staffObj.employee_id,
+        designation: staffObj.designation,
         email: `${staffName.toLowerCase().replace(/\s+/g, ".")}@example.com`,
         totalTasks: total,
         completedTasks: completed,

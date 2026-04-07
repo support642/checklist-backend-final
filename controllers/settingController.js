@@ -115,7 +115,8 @@ export const createUser = async (req, res) => {
       division,
       system_access,
       page_access,
-      subscription_access_system
+      subscription_access_system,
+      designation
     } = req.body;
 
 
@@ -133,9 +134,10 @@ export const createUser = async (req, res) => {
     const query = `
       INSERT INTO users (
         user_name, password, email_id, number, department,
-        given_by, role, status, user_access, unit, division, system_access, page_access, subscription_access_system
+        given_by, role, status, user_access, unit, division, system_access, page_access, 
+        subscription_access_system, designation
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
       RETURNING *
     `;
 
@@ -154,7 +156,8 @@ export const createUser = async (req, res) => {
       division || null,
       system_access ? JSON.stringify(system_access) : null,
       page_access ? JSON.stringify(page_access) : null,
-      subscription_access_system ? JSON.stringify(subscription_access_system) : null
+      subscription_access_system ? JSON.stringify(subscription_access_system) : null,
+      designation || null
     ];
 
     const result = await pool.query(query, values);
@@ -192,7 +195,8 @@ export const updateUser = async (req, res) => {
       remark,
       system_access,
       page_access,
-      subscription_access_system
+      subscription_access_system,
+      designation
     } = req.body;
 
     // Fetch the old user_name before updating
@@ -218,7 +222,8 @@ export const updateUser = async (req, res) => {
         division = $16,
         system_access = $17,
         page_access = $18,
-        subscription_access_system = $19
+        subscription_access_system = $19,
+        designation = $20
       WHERE id = $14
       RETURNING *
     `;
@@ -229,7 +234,8 @@ export const updateUser = async (req, res) => {
       leave_date, leave_end_date, remark, id, unit || null, division || null,
       system_access ? JSON.stringify(system_access) : null,
       page_access ? JSON.stringify(page_access) : null,
-      subscription_access_system ? JSON.stringify(subscription_access_system) : null
+      subscription_access_system ? JSON.stringify(subscription_access_system) : null,
+      designation || null
     ];
 
 
