@@ -23,7 +23,10 @@ export const getStaffTasks = async (req, res) => {
       department = "",
       startDate: queryStartDate = "",
       endDate: queryEndDate = "",
-      search = ""
+      search = "",
+      selectedDepartment = "",
+      selectedDivision = "",
+      selectedUnit = ""
     } = req.query;
 
     const table = dashboardType;
@@ -88,6 +91,23 @@ export const getStaffTasks = async (req, res) => {
       paramCount++;
     }
 
+    // Apply user-selected dropdown filters (division, department, unit)
+    if (selectedDivision && selectedDivision !== 'all') {
+      staffQuery += ` AND LOWER(u.division) = LOWER($${paramCount})`;
+      params.push(selectedDivision);
+      paramCount++;
+    }
+    if (selectedDepartment && selectedDepartment !== 'all') {
+      staffQuery += ` AND LOWER(u.department) = LOWER($${paramCount})`;
+      params.push(selectedDepartment);
+      paramCount++;
+    }
+    if (selectedUnit && selectedUnit !== 'all') {
+      staffQuery += ` AND LOWER(u.unit) = LOWER($${paramCount})`;
+      params.push(selectedUnit);
+      paramCount++;
+    }
+
     // Add date filter - Hierarchy:
     // 1. Explicit queryStartDate & queryEndDate (from Export Modal/Header)
     // 2. Or monthYear (from Month Dropdown)
@@ -103,10 +123,18 @@ export const getStaffTasks = async (req, res) => {
       const endOfMonth = new Date(year, month, 0);
       
       const startDate = formatLocalYMD(startOfMonth);
-      const endDate = formatLocalYMD(endOfMonth);
+      let calculatedEndDate = formatLocalYMD(endOfMonth);
+
+      // CAP by tillDate if provided and within/before the month
+      if (tillDate) {
+        const tillDateObj = new Date(tillDate);
+        if (tillDateObj < endOfMonth) {
+          calculatedEndDate = tillDate;
+        }
+      }
 
       staffQuery += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
-      params.push(startDate, `${endDate} 23:59:59`);
+      params.push(startDate, `${calculatedEndDate} 23:59:59`);
       paramCount += 2;
     } else if (tillDate) {
       staffQuery += ` AND t.${dateCol} <= $${paramCount}`;
@@ -205,10 +233,18 @@ export const getStaffTasks = async (req, res) => {
         const endOfMonth = new Date(year, month, 0);
         
         const startDate = formatLocalYMD(startOfMonth);
-        const endDate = formatLocalYMD(endOfMonth);
+        let calculatedEndDate = formatLocalYMD(endOfMonth);
+
+        // CAP by tillDate if provided
+        if (tillDate) {
+          const tillDateObj = new Date(tillDate);
+          if (tillDateObj < endOfMonth) {
+            calculatedEndDate = tillDate;
+          }
+        }
 
         taskQuery += ` AND ${dateCol} >= $${tc} AND ${dateCol} <= $${tc + 1}`;
-        tp.push(startDate, `${endDate} 23:59:59`);
+        tp.push(startDate, `${calculatedEndDate} 23:59:59`);
         tc += 2;
       } else if (tillDate) {
         taskQuery += ` AND ${dateCol} <= $${tc}`;
@@ -332,10 +368,18 @@ export const getStaffDetails = async (req, res) => {
       const endOfMonth = new Date(year, month, 0);
       
       const startDate = formatLocalYMD(startOfMonth);
-      const endDate = formatLocalYMD(endOfMonth);
- 
+      let calculatedEndDate = formatLocalYMD(endOfMonth);
+
+      // CAP by tillDate if provided
+      if (tillDate) {
+        const tillDateObj = new Date(tillDate);
+        if (tillDateObj < endOfMonth) {
+          calculatedEndDate = tillDate;
+        }
+      }
+
       query += ` AND t.${dateCol}::timestamp >= $${paramCount}::timestamp AND t.${dateCol}::timestamp <= $${paramCount + 1}::timestamp`;
-      params.push(startDate, `${endDate} 23:59:59`);
+      params.push(startDate, `${calculatedEndDate} 23:59:59`);
       paramCount += 2;
     } else if (tillDate) {
       query += ` AND t.${dateCol}::timestamp <= $${paramCount}::timestamp`;
@@ -356,19 +400,8 @@ export const getStaffDetails = async (req, res) => {
       paramCount += 3;
     }
 
-    // Month-year filter
-    if (monthYear) {
-      const [year, month] = monthYear.split('-').map(Number);
-      const startOfMonth = new Date(year, month - 1, 1);
-      const endOfMonth = new Date(year, month, 0);
-      
-      const startDate = formatLocalYMD(startOfMonth);
-      const endDate = formatLocalYMD(endOfMonth);
- 
-      query += ` AND t.${dateCol}::timestamp >= $${paramCount}::timestamp AND t.${dateCol}::timestamp <= $${paramCount + 1}::timestamp`;
-      params.push(startDate, `${endDate} 23:59:59`);
-      paramCount += 2;
-    }
+    // REMOVE redundant block or keep it for legacy? The above code already handles monthYear for details.
+    // Actually, line 360-371 is a DUPLICATE block in the original file. I'll remove it or update it.
 
     query += ` ORDER BY t.${dateCol} DESC, t.submission_date DESC NULLS LAST`;
 
@@ -393,9 +426,17 @@ export const getStaffCount = async (req, res) => {
       unit = "",
       division = "",
       department = "",
-      search = ""
+      search = "",
+      monthYear = "",
+      tillDate = "",
+      startDate: queryStartDate = "",
+      endDate: queryEndDate = "",
+      selectedDepartment = "",
+      selectedDivision = "",
+      selectedUnit = ""
     } = req.query;
     const table = dashboardType;
+    const dateCol = table === "checklist" ? "task_start_date" : "planned_date";
 
     const paramsCount = [];
     let pc = 1;
@@ -410,7 +451,7 @@ export const getStaffCount = async (req, res) => {
         LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
         WHERE t.name IS NOT NULL 
         AND t.name != ''
-        AND t.${dashboardType === "checklist" ? "task_start_date" : "planned_date"}::timestamp <= NOW()
+        AND t.${dateCol} IS NOT NULL
       `;
     } else {
       query = `
@@ -419,7 +460,7 @@ export const getStaffCount = async (req, res) => {
         JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
         WHERE t.name IS NOT NULL 
         AND t.name != ''
-        AND t.${dashboardType === "checklist" ? "task_start_date" : "planned_date"}::timestamp <= NOW()
+        AND t.${dateCol} IS NOT NULL
       `;
 
       if (userRole === "DIV_ADMIN" && unit && division) {
@@ -437,15 +478,64 @@ export const getStaffCount = async (req, res) => {
       }
     }
 
+    // Add search filter
+    if (search) {
+      query += ` AND t.name ILIKE $${pc}`;
+      paramsCount.push(`%${search}%`);
+      pc++;
+    }
+
+    // Add date filtering consistent with getStaffTasks
+    if (queryStartDate && queryEndDate) {
+      query += ` AND t.${dateCol} >= $${pc} AND t.${dateCol} <= $${pc + 1}`;
+      paramsCount.push(queryStartDate, `${queryEndDate} 23:59:59`);
+      pc += 2;
+    } else if (monthYear) {
+      const [year, month] = monthYear.split('-').map(Number);
+      const startOfMonth = new Date(year, month - 1, 1);
+      const endOfMonth = new Date(year, month, 0);
+      
+      const startDate = formatLocalYMD(startOfMonth);
+      let calculatedEndDate = formatLocalYMD(endOfMonth);
+
+      if (tillDate) {
+        const tillDateObj = new Date(tillDate);
+        if (tillDateObj < endOfMonth) {
+          calculatedEndDate = tillDate;
+        }
+      }
+
+      query += ` AND t.${dateCol} >= $${pc} AND t.${dateCol} <= $${pc + 1}`;
+      paramsCount.push(startDate, `${calculatedEndDate} 23:59:59`);
+      pc += 2;
+    } else if (tillDate) {
+      query += ` AND t.${dateCol} <= $${pc}`;
+      paramsCount.push(`${tillDate} 23:59:59`);
+      pc++;
+    } else {
+      query += ` AND t.${dateCol} <= NOW()`;
+    }
+
     if (staffFilter !== "all") {
-      query += ` AND LOWER(${pc === 1 ? 'name' : 't.name'})=LOWER($${pc})`;
+      query += ` AND LOWER(t.name) = LOWER($${pc})`;
       paramsCount.push(staffFilter);
       pc++;
     }
 
-    if (search) {
-      query += ` AND t.name ILIKE $${pc}`;
-      paramsCount.push(`%${search}%`);
+    // Apply user-selected dropdown filters
+    if (selectedDivision && selectedDivision !== 'all') {
+      query += ` AND LOWER(u.division) = LOWER($${pc})`;
+      paramsCount.push(selectedDivision);
+      pc++;
+    }
+    if (selectedDepartment && selectedDepartment !== 'all') {
+      query += ` AND LOWER(u.department) = LOWER($${pc})`;
+      paramsCount.push(selectedDepartment);
+      pc++;
+    }
+    if (selectedUnit && selectedUnit !== 'all') {
+      query += ` AND LOWER(u.unit) = LOWER($${pc})`;
+      paramsCount.push(selectedUnit);
       pc++;
     }
 

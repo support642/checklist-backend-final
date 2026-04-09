@@ -57,13 +57,12 @@ function getDefaultPermissions(role) {
  *******************************/
 export const getUsers = async (req, res) => {
   try {
-    const { requesterRole, requesterUnit, requesterDivision, requesterDepartment } = req.query;
+    const { requesterRole, requesterUnit, requesterDivision, requesterDepartment, page = 1, limit = 50, search } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const offset = (pageNum - 1) * limitNum;
 
-    let query = `
-      SELECT *
-      FROM users
-      WHERE user_name IS NOT NULL
-    `;
+    let filterQuery = ` WHERE user_name IS NOT NULL`;
     const params = [];
 
     // Apply role-based filtering if requester info is provided
@@ -74,21 +73,45 @@ export const getUsers = async (req, res) => {
         // No filter
       } else if (role === "DIV_ADMIN") {
         params.push(requesterUnit, requesterDivision);
-        query += ` AND LOWER(unit) = LOWER($1) AND LOWER(division) = LOWER($2)`;
+        filterQuery += ` AND LOWER(unit) = LOWER($1) AND LOWER(division) = LOWER($2)`;
       } else if (role === "ADMIN") {
         params.push(requesterUnit, requesterDivision, requesterDepartment);
-        query += ` AND LOWER(unit) = LOWER($1) AND LOWER(division) = LOWER($2) AND LOWER(department) = LOWER($3)`;
+        filterQuery += ` AND LOWER(unit) = LOWER($1) AND LOWER(division) = LOWER($2) AND LOWER(department) = LOWER($3)`;
       } else {
         // Standard user or other - ideally they shouldn't call this, but let's be safe
         params.push(req.query.username || ''); // Fallback to self
-        query += ` AND user_name = $1`;
+        filterQuery += ` AND user_name = $1`;
       }
     }
 
-    query += ` ORDER BY id ASC`;
-    const result = await pool.query(query, params);
+    // Apply search filter if provided
+    if (search) {
+      params.push(`%${search}%`);
+      filterQuery += ` AND (LOWER(user_name) LIKE LOWER($${params.length}) OR LOWER(email_id) LIKE LOWER($${params.length}))`;
+    }
 
-    res.json(result.rows);
+    // Get total count
+    const countResult = await pool.query(`SELECT COUNT(*) FROM users ${filterQuery}`, params);
+    const totalCount = parseInt(countResult.rows[0].count);
+
+    // Get paginated data
+    const dataParams = [...params, limitNum, offset];
+    const dataQuery = `
+      SELECT *
+      FROM users
+      ${filterQuery}
+      ORDER BY id ASC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+    const result = await pool.query(dataQuery, dataParams);
+
+    res.json({
+      users: result.rows,
+      totalCount,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(totalCount / limitNum)
+    });
   } catch (error) {
     console.error("❌ Error fetching users:", error);
     res.status(500).json({ error: "Database error" });

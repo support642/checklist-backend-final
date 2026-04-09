@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 // Map to store active SSE connections: username -> Response[]
 export const activeClients = new Map();
 
-export const authStream = (req, res) => {
+export const authStream = async (req, res) => {
   const { username } = req.query;
   if (!username) {
     return res.status(400).end();
@@ -18,6 +18,21 @@ export const authStream = (req, res) => {
 
   // Send an initial heartbeat to confirm connection
   res.write("data: connected\n\n");
+
+  // Check if session exists for this user in DB
+  try {
+    const { rows } = await pool.query(
+      "SELECT is_active FROM sessions WHERE username = $1 AND is_active = TRUE LIMIT 1",
+      [username]
+    );
+
+    if (rows.length === 0) {
+      // If no active session, trigger immediate logout
+      res.write("event: force_logout\ndata: {}\n\n");
+    }
+  } catch (err) {
+    console.error("SSE Session Check Error:", err);
+  }
 
   if (!activeClients.has(username)) {
     activeClients.set(username, []);

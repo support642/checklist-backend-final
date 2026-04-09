@@ -204,8 +204,11 @@ export const getChecklistHistory = async (req, res) => {
     const role = req.query.role;
     const department = req.query.department;
     const search = req.query.search;
+    const startDate = req.query.startDate;
+    const endDate = req.query.endDate;
+    const approvalStatus = req.query.approvalStatus || 'all'; // all, pending, approved
 
-    const limit = 50;
+    const limit = parseInt(req.query.limit) || 50;
     const offset = (page - 1) * limit;
     const requesterUnit = req.query.unit;
     const requesterDivision = req.query.division;
@@ -230,13 +233,13 @@ export const getChecklistHistory = async (req, res) => {
         params.push(requesterDivision);
       }
     } else if (upRole === "ADMIN" || upRole === "admin") {
-      if (requesterUnit && requesterDivision && department) {
+      if (requesterUnit && requesterDivision && (department || req.query.departmentFilter)) {
         whereConditions.push(`LOWER(unit) = LOWER($${paramIndex++})`);
         params.push(requesterUnit);
         whereConditions.push(`LOWER(division) = LOWER($${paramIndex++})`);
         params.push(requesterDivision);
         whereConditions.push(`LOWER(department) = LOWER($${paramIndex++})`);
-        params.push(department);
+        params.push(department || req.query.departmentFilter);
       } else if (department) {
         whereConditions.push(`LOWER(department) = LOWER($${paramIndex++})`);
         params.push(department);
@@ -260,6 +263,19 @@ export const getChecklistHistory = async (req, res) => {
       params.push(nameFilter);
     }
 
+    // ⭐ Date Filters
+    if (startDate && endDate) {
+      whereConditions.push(`submission_date >= $${paramIndex++} AND submission_date <= $${paramIndex++}`);
+      params.push(startDate, `${endDate} 23:59:59`);
+    }
+
+    // ⭐ Approval Status Filter
+    if (approvalStatus === 'pending') {
+      whereConditions.push(`(admin_done IS NULL OR admin_done != 'Done')`);
+    } else if (approvalStatus === 'approved') {
+      whereConditions.push(`admin_done = 'Done'`);
+    }
+
     if (search) {
       const searchPlaceholder = `$${paramIndex++}`;
       whereConditions.push(`(
@@ -276,6 +292,50 @@ export const getChecklistHistory = async (req, res) => {
 
     const where = whereConditions.join(" AND ");
 
+    // --- COUNT QUERY (Directly from database for context) ---
+    const countWhereConditions = [`submission_date IS NOT NULL`];
+    const countParams = [];
+    let countParamIdx = 1;
+
+    if (upRole === "SUPER_ADMIN") {
+      // No restricted filter
+    } else if (upRole === "DIV_ADMIN") {
+      if (requesterUnit && requesterDivision) {
+        countWhereConditions.push(`LOWER(unit) = LOWER($${countParamIdx++})`);
+        countParams.push(requesterUnit);
+        countWhereConditions.push(`LOWER(division) = LOWER($${countParamIdx++})`);
+        countParams.push(requesterDivision);
+      }
+    } else if (upRole === "ADMIN") {
+      if (requesterUnit && requesterDivision && (department || req.query.departmentFilter)) {
+        countWhereConditions.push(`LOWER(unit) = LOWER($${countParamIdx++})`);
+        countParams.push(requesterUnit);
+        countWhereConditions.push(`LOWER(division) = LOWER($${countParamIdx++})`);
+        countParams.push(requesterDivision);
+        countWhereConditions.push(`LOWER(department) = LOWER($${countParamIdx++})`);
+        countParams.push(department || req.query.departmentFilter);
+      } else if (department) {
+        countWhereConditions.push(`LOWER(department) = LOWER($${countParamIdx++})`);
+        countParams.push(department);
+      }
+    } else if (username) {
+      countWhereConditions.push(`LOWER(name) = LOWER($${countParamIdx++})`);
+      countParams.push(username);
+    }
+
+    const countQueryText = `
+      SELECT 
+        COUNT(*)::INT as total_count,
+        SUM(CASE WHEN admin_done = 'Done' THEN 1 ELSE 0 END)::INT as approved_count
+      FROM checklist
+      WHERE ${countWhereConditions.join(" AND ")}
+    `;
+    const countRes = await pool.query(countQueryText, countParams);
+    const totalCount = countRes.rows[0].total_count || 0;
+    const approvedCount = countRes.rows[0].approved_count || 0;
+    const pendingCount = totalCount - approvedCount;
+
+    // --- DATA QUERY (Filtered for UI) ---
     const query = `
       SELECT 
         task_id,
@@ -297,9 +357,7 @@ export const getChecklistHistory = async (req, res) => {
         submission_date::text as submission_date,
         admin_done_remarks,
         unit,
-        division,
-        COUNT(*) OVER() AS total_count,
-        SUM(CASE WHEN admin_done = 'Done' THEN 1 ELSE 0 END) OVER() AS approved_count
+        division
       FROM checklist
       WHERE ${where}
       ORDER BY submission_date DESC
@@ -308,14 +366,13 @@ export const getChecklistHistory = async (req, res) => {
 
     const { rows } = await pool.query(query, params);
 
-    const totalCount = rows.length > 0 ? parseInt(rows[0].total_count) : 0;
-    const approvedCount = rows.length > 0 ? parseInt(rows[0].approved_count) : 0;
-
     res.json({
       data: rows,
       page,
       totalCount,
       approvedCount,
+      pendingCount,
+      totalPages: Math.ceil(totalCount / limit)
     });
   } catch (error) {
     console.error("❌ Error fetching history:", error);

@@ -64,34 +64,12 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
   const username = req.query.username;
   const userAccess = req.query.user_access;
   const search = req.query.search;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 50;
+  const offset = (page - 1) * limit;
+  const approvalStatus = req.query.approvalStatus || 'all';
 
   try {
-    let baseQuery = `
-      SELECT 
-        dd.id,
-        dd.task_id,
-        dd.status,
-        to_char(dd.next_extend_date, 'YYYY-MM-DD HH24:MI:SS') as next_extend_date,
-        dd.reason,
-        dd.image_url,
-        dd.name,
-        dd.task_description,
-        dd.given_by,
-        to_char(dd.created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at,
-        dd.admin_done,
-        dd.admin_done_remarks,
-        to_char(d.planned_date, 'YYYY-MM-DD HH24:MI:SS') as planned_date,
-        to_char(d.submission_date, 'YYYY-MM-DD HH24:MI:SS') as submission_date,
-        d.adminremarks,
-        d.department,
-        d.unit,
-        d.division,
-        COUNT(*) OVER() AS total_count,
-        SUM(CASE WHEN dd.admin_done = 'Done' THEN 1 ELSE 0 END) OVER() AS approved_count
-      FROM delegation_done dd
-      LEFT JOIN delegation d ON dd.task_id::BIGINT = d.task_id
-    `;
-
     let whereConditions = [];
     const params = [];
     let paramIndex = 1;
@@ -146,34 +124,105 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
     }
 
     if (search) {
+      const searchPlaceholder = `$${paramIndex++}`;
       whereConditions.push(`(
-        LOWER(dd.name) LIKE $${paramIndex} OR 
-        LOWER(dd.task_description) LIKE $${paramIndex} OR 
-        LOWER(d.department) LIKE $${paramIndex} OR 
-        LOWER(dd.given_by) LIKE $${paramIndex} OR
-        CAST(dd.task_id AS TEXT) LIKE $${paramIndex} OR
-        LOWER(d.unit) LIKE $${paramIndex} OR
-        LOWER(d.division) LIKE $${paramIndex}
+        LOWER(dd.name) LIKE ${searchPlaceholder} OR 
+        LOWER(dd.task_description) LIKE ${searchPlaceholder} OR 
+        LOWER(d.department) LIKE ${searchPlaceholder} OR 
+        LOWER(dd.given_by) LIKE ${searchPlaceholder} OR
+        CAST(dd.task_id AS TEXT) LIKE ${searchPlaceholder} OR
+        LOWER(d.unit) LIKE ${searchPlaceholder} OR
+        LOWER(d.division) LIKE ${searchPlaceholder}
       )`);
       params.push(`%${search.toLowerCase()}%`);
-      paramIndex++;
     }
 
-    let query = baseQuery;
-    if (whereConditions.length > 0) {
-      query += ` WHERE ` + whereConditions.join(" AND ");
+    let whereClause = whereConditions.length > 0 ? ` WHERE ` + whereConditions.join(" AND ") : "";
+
+    // --- COUNT QUERY (Directly from database for context) ---
+    let countWhereConditions = [];
+    const countParams = [];
+    let countParamIdx = 1;
+
+    if (upRole === "SUPER_ADMIN") {
+      // No filter
+    } else if (upRole === "DIV_ADMIN") {
+      countWhereConditions.push(`LOWER(d.unit) = LOWER($${countParamIdx++})`);
+      countParams.push(requesterUnit);
+      countWhereConditions.push(`LOWER(d.division) = LOWER($${countParamIdx++})`);
+      countParams.push(requesterDivision);
+    } else if (upRole === "ADMIN") {
+      countWhereConditions.push(`LOWER(d.unit) = LOWER($${countParamIdx++})`);
+      countParams.push(requesterUnit);
+      countWhereConditions.push(`LOWER(d.division) = LOWER($${countParamIdx++})`);
+      countParams.push(requesterDivision);
+      countWhereConditions.push(`LOWER(d.department) = LOWER($${countParamIdx++})`);
+      countParams.push(requesterDepartment || userAccess);
+    } else {
+      countWhereConditions.push(`dd.name = $${countParamIdx++}`);
+      countParams.push(username);
     }
-    query += ` ORDER BY dd.created_at DESC;`;
+
+    const countWhereClause = countWhereConditions.length > 0 ? ` WHERE ` + countWhereConditions.join(" AND ") : "";
+    const countQueryText = `
+      SELECT 
+        COUNT(*)::INT as total_count,
+        SUM(CASE WHEN dd.admin_done = 'Done' THEN 1 ELSE 0 END)::INT as approved_count
+      FROM delegation_done dd
+      LEFT JOIN delegation d ON dd.task_id::BIGINT = d.task_id
+      ${countWhereClause}
+    `;
+    const countRes = await pool.query(countQueryText, countParams);
+    const totalCount = countRes.rows[0].total_count || 0;
+    const approvedCount = countRes.rows[0].approved_count || 0;
+    const pendingCount = totalCount - approvedCount;
+
+    // --- DATA QUERY (Filtered for UI) ---
+    // Build the query using all filters
+    let query = `
+      SELECT 
+        dd.id,
+        dd.task_id,
+        dd.status,
+        to_char(dd.next_extend_date, 'YYYY-MM-DD HH24:MI:SS') as next_extend_date,
+        dd.reason,
+        dd.image_url,
+        dd.name,
+        dd.task_description,
+        dd.given_by,
+        to_char(dd.created_at, 'YYYY-MM-DD HH24:MI:SS') as created_at_str,
+        dd.created_at,
+        dd.admin_done,
+        dd.admin_done_remarks,
+        to_char(d.planned_date, 'YYYY-MM-DD HH24:MI:SS') as planned_date,
+        to_char(d.submission_date, 'YYYY-MM-DD HH24:MI:SS') as submission_date,
+        d.adminremarks,
+        d.department,
+        d.unit,
+        d.division
+      FROM delegation_done dd
+      LEFT JOIN delegation d ON dd.task_id::BIGINT = d.task_id
+      ${whereClause}
+    `;
+
+    if (approvalStatus === 'pending') {
+      query += (whereClause ? " AND " : " WHERE ") + ` (dd.admin_done IS NULL OR dd.admin_done != 'Done') `;
+    } else if (approvalStatus === 'approved') {
+      query += (whereClause ? " AND " : " WHERE ") + ` dd.admin_done = 'Done' `;
+    }
+
+    query += ` ORDER BY dd.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++} `;
+    params.push(limit, offset);
 
     const { rows } = await pool.query(query, params);
 
-    const totalCount = rows.length > 0 ? parseInt(rows[0].total_count) : 0;
-    const approvedCount = rows.length > 0 ? parseInt(rows[0].approved_count) : 0;
-
     return res.json({
       data: rows,
+      page,
       totalCount,
-      approvedCount
+      approvedCount,
+      pendingCount,
+      totalPages: Math.ceil(totalCount / limit)
     });
   } catch (err) {
     console.log("Done fetch error:", err);
