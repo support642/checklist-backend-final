@@ -35,77 +35,90 @@ const sanitizeNullValue = (value) => {
 };
 
 // Helper function to calculate next working dates based on frequency
-const generateTaskDates = async (startDate, frequency, count = 365) => {
-  // Get working days from calendar (excluding Sundays)
+const generateTaskDates = async (startDate, frequency, count = 365, username = null) => {
+  // 1. Generation start (day_off filtering removed)
+
+  // Map English day names to Hindi day names used in working_day_calender
+  const dayNameMap = {
+    'Sunday': 'रवि',
+    'Monday': 'सोम',
+    'Tuesday': 'मंगल',
+    'Wednesday': 'बुध',
+    'Thursday': 'गुरु',
+    'Friday': 'शुक्र',
+    'Saturday': 'शनि'
+  };
+
+  // dayOffHindi filtering removed
+
+  // Get working days from calendar (including Hindi day name for filtering)
   const workingDaysResult = await pool.query(`
-    SELECT working_date 
+    SELECT working_date, day
     FROM working_day_calender 
     WHERE working_date >= $1
     ORDER BY working_date ASC
     LIMIT $2
   `, [startDate, count]);
 
-  const workingDays = workingDaysResult.rows.map(r => new Date(r.working_date));
-  const taskDates = [];
+  const workingDaysRaw = workingDaysResult.rows.map(r => ({
+    date: new Date(r.working_date),
+    dayHindi: r.day
+  }));
+
+  const workingDays = workingDaysRaw.map(r => r.date);
+  const taskDatesRaw = [];
 
   switch (frequency?.toLowerCase()) {
     case 'daily':
-      // Every working day
-      taskDates.push(...workingDays);
+      taskDatesRaw.push(...workingDaysRaw);
       break;
 
     case 'tertiary':
-      // Every 3rd working day
-      for (let i = 0; i < workingDays.length; i += 3) {
-        taskDates.push(workingDays[i]);
+      for (let i = 0; i < workingDaysRaw.length; i += 3) {
+        taskDatesRaw.push(workingDaysRaw[i]);
       }
       break;
 
     case 'weekly':
-      // Every 7th working day
-      for (let i = 0; i < workingDays.length; i += 7) {
-        taskDates.push(workingDays[i]);
+      for (let i = 0; i < workingDaysRaw.length; i += 7) {
+        taskDatesRaw.push(workingDaysRaw[i]);
       }
       break;
 
     case 'fortnightly':
-      // Every 14th working day
-      for (let i = 0; i < workingDays.length; i += 14) {
-        taskDates.push(workingDays[i]);
+      for (let i = 0; i < workingDaysRaw.length; i += 14) {
+        taskDatesRaw.push(workingDaysRaw[i]);
       }
       break;
 
     case 'monthly':
-      // First working day of each month
       let lastMonth = -1;
-      for (const date of workingDays) {
-        const month = date.getMonth();
+      for (const item of workingDaysRaw) {
+        const month = item.date.getMonth();
         if (month !== lastMonth) {
-          taskDates.push(date);
+          taskDatesRaw.push(item);
           lastMonth = month;
         }
       }
       break;
 
     case 'quarterly':
-      // First working day of each quarter
       let lastQuarter = -1;
-      for (const date of workingDays) {
-        const quarter = Math.floor(date.getMonth() / 3);
+      for (const item of workingDaysRaw) {
+        const quarter = Math.floor(item.date.getMonth() / 3);
         if (quarter !== lastQuarter) {
-          taskDates.push(date);
+          taskDatesRaw.push(item);
           lastQuarter = quarter;
         }
       }
       break;
 
     case 'yearly':
-      // First working day of each year
       let lastYear = -1;
-      for (const date of workingDays) {
-        const year = date.getFullYear();
+      for (const item of workingDaysRaw) {
+        const year = item.date.getFullYear();
         if (year !== lastYear) {
-          taskDates.push(date);
+          taskDatesRaw.push(item);
           lastYear = year;
         }
       }
@@ -113,10 +126,19 @@ const generateTaskDates = async (startDate, frequency, count = 365) => {
 
     default:
       // If no frequency or unknown, just use the start date
-      taskDates.push(new Date(startDate));
+      // We might not have the dayHindi for this specific date if it's not in calendar,
+      // but usually the calendar is comprehensive.
+      const directDate = new Date(startDate);
+      const calendarMatch = workingDaysRaw.find(r => r.date.getTime() === directDate.getTime());
+      taskDatesRaw.push({
+        date: directDate,
+        dayHindi: calendarMatch ? calendarMatch.dayHindi : null
+      });
   }
 
-  return taskDates;
+  const filteredDates = taskDatesRaw.map(item => item.date);
+
+  return filteredDates;
 };
 
 // Bulk import into checklist table (SMART IMPORT - generates recurring tasks)
@@ -164,7 +186,7 @@ export const bulkImportChecklist = async (req, res) => {
       const frequency = taskDef.frequency || 'daily';
 
       // Generate task dates based on frequency and working calendar
-      const taskDates = await generateTaskDates(startDate, frequency);
+      const taskDates = await generateTaskDates(startDate, frequency, 365, taskDef.name);
 
       console.log(`📅 Task "${taskDef.task_description}" (${frequency}): Generating ${taskDates.length} instances`);
 
@@ -431,7 +453,7 @@ export const bulkImportMaintenance = async (req, res) => {
       const machinePartId = mpResult.rows.length > 0 ? mpResult.rows[0].id : null;
 
       // Generate task dates based on frequency and working calendar
-      const taskDates = await generateTaskDates(startDate, frequency);
+      const taskDates = await generateTaskDates(startDate, frequency, 365, taskDef.name);
 
       // Create task instance for each date
       for (const date of taskDates) {

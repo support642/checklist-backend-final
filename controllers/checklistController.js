@@ -632,3 +632,42 @@ export const sendEmailNotification = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+// -----------------------------------------
+// 6️⃣ GET CHECKLIST & MAINTENANCE METADATA
+// -----------------------------------------
+export const getChecklistMetadata = async (req, res) => {
+  try {
+    const divisionQuery = `
+      SELECT DISTINCT division 
+      FROM (
+        SELECT division FROM checklist WHERE division IS NOT NULL AND division != ''
+        UNION
+        SELECT division FROM maintenance_tasks WHERE division IS NOT NULL AND division != ''
+      ) AS combined 
+      ORDER BY division ASC
+    `;
+
+    const departmentQuery = `
+      SELECT DISTINCT department 
+      FROM (
+        SELECT department FROM checklist WHERE department IS NOT NULL AND department != ''
+        UNION
+        SELECT department FROM maintenance_tasks WHERE department IS NOT NULL AND department != ''
+      ) AS combined 
+      ORDER BY department ASC
+    `;
+
+    const [divisions, departments] = await Promise.all([
+      pool.query(divisionQuery),
+      pool.query(departmentQuery)
+    ]);
+
+    res.json({
+      divisions: divisions.rows.map(r => r.division),
+      departments: departments.rows.map(r => r.department)
+    });
+  } catch (error) {
+    console.error("❌ Error fetching checklist metadata:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};

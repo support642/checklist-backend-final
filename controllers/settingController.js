@@ -219,12 +219,18 @@ export const updateUser = async (req, res) => {
       system_access,
       page_access,
       subscription_access_system,
-      designation
+      designation,
+      requesterRole // Expecting requesterRole in body or query
     } = req.body;
 
-    // Fetch the old user_name before updating
-    const oldUserResult = await pool.query('SELECT user_name FROM users WHERE id = $1', [id]);
-    const oldUserName = oldUserResult.rows[0]?.user_name;
+    // 1. Fetch current user data
+    const currentUserResult = await pool.query('SELECT user_name, role FROM users WHERE id = $1', [id]);
+    if (currentUserResult.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    const currentUser = currentUserResult.rows[0];
+    const oldUserName = currentUser.user_name;
 
     const query = `
       UPDATE users SET
@@ -519,4 +525,4 @@ export const uploadPartImage = async (req, res) => {
     console.error("❌ Error uploading part image:", error);
     res.status(500).json({ error: "Upload failed" });
   }
-};
+};

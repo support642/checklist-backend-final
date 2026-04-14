@@ -112,7 +112,7 @@ export const getUniqueDoerNames = async (req, res) => {
 
     const result = await pool.query(query, params);
 
-    res.json(result.rows.map(r => r.user_name));
+    res.json(result.rows.map(r => ({ user_name: r.user_name })));
   } catch (e) {
     console.error(e);
     res.status(500).send("Server Error");
@@ -128,7 +128,7 @@ export const getAllDoerNames = async (req, res) => {
        WHERE status='active'
        ORDER BY user_name ASC`
     );
-    res.json(result.rows.map(r => r.user_name));
+    res.json(result.rows.map(r => ({ user_name: r.user_name })));
   } catch (e) {
     console.error(e);
     res.status(500).send("Server Error");
