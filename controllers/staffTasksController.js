@@ -121,7 +121,7 @@ export const getStaffTasks = async (req, res) => {
       const [year, month] = monthYear.split('-').map(Number);
       const startOfMonth = new Date(year, month - 1, 1);
       const endOfMonth = new Date(year, month, 0);
-      
+
       const startDate = formatLocalYMD(startOfMonth);
       let calculatedEndDate = formatLocalYMD(endOfMonth);
 
@@ -231,7 +231,7 @@ export const getStaffTasks = async (req, res) => {
         const [year, month] = monthYear.split('-').map(Number);
         const startOfMonth = new Date(year, month - 1, 1);
         const endOfMonth = new Date(year, month, 0);
-        
+
         const startDate = formatLocalYMD(startOfMonth);
         let calculatedEndDate = formatLocalYMD(endOfMonth);
 
@@ -366,7 +366,7 @@ export const getStaffDetails = async (req, res) => {
       const [year, month] = monthYear.split('-').map(Number);
       const startOfMonth = new Date(year, month - 1, 1);
       const endOfMonth = new Date(year, month, 0);
-      
+
       const startDate = formatLocalYMD(startOfMonth);
       let calculatedEndDate = formatLocalYMD(endOfMonth);
 
@@ -494,7 +494,7 @@ export const getStaffCount = async (req, res) => {
       const [year, month] = monthYear.split('-').map(Number);
       const startOfMonth = new Date(year, month - 1, 1);
       const endOfMonth = new Date(year, month, 0);
-      
+
       const startDate = formatLocalYMD(startOfMonth);
       let calculatedEndDate = formatLocalYMD(endOfMonth);
 

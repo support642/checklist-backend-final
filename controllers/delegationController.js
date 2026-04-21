@@ -70,9 +70,19 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
   const approvalStatus = req.query.approvalStatus || 'all';
 
   try {
-    let whereConditions = [];
+    const whereConditions = [];
+    const countWhereConditions = [];
     const params = [];
+    const countParams = [];
     let paramIndex = 1;
+    let countParamIndex = 1;
+
+    const addFilter = (condition, value) => {
+      whereConditions.push(condition.replace(/\?/g, () => `$${paramIndex++}`));
+      countWhereConditions.push(condition.replace(/\?/g, () => `$${countParamIndex++}`));
+      params.push(value);
+      countParams.push(value);
+    };
 
     const upRole = role ? role.toUpperCase() : "USER";
     const requesterUnit = req.query.unit;
@@ -86,83 +96,56 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
     if (upRole === "SUPER_ADMIN" || upRole === "super_admin") {
       // No filter
     } else if (upRole === "DIV_ADMIN" || upRole === "div_admin") {
-      whereConditions.push(`LOWER(d.unit) = LOWER($${paramIndex++})`);
-      params.push(requesterUnit);
-      whereConditions.push(`LOWER(d.division) = LOWER($${paramIndex++})`);
-      params.push(requesterDivision);
+      addFilter(`LOWER(d.unit) = LOWER(?)`, requesterUnit);
+      addFilter(`LOWER(d.division) = LOWER(?)`, requesterDivision);
     } else if (upRole === "ADMIN" || upRole === "admin") {
-      whereConditions.push(`LOWER(d.unit) = LOWER($${paramIndex++})`);
-      params.push(requesterUnit);
-      whereConditions.push(`LOWER(d.division) = LOWER($${paramIndex++})`);
-      params.push(requesterDivision);
-      whereConditions.push(`LOWER(d.department) = LOWER($${paramIndex++})`);
-      params.push(requesterDepartment || userAccess);
+      addFilter(`LOWER(d.unit) = LOWER(?)`, requesterUnit);
+      addFilter(`LOWER(d.division) = LOWER(?)`, requesterDivision);
+      addFilter(`LOWER(d.department) = LOWER(?)`, requesterDepartment || userAccess);
     } else {
-      whereConditions.push(`dd.name = $${paramIndex++}`);
-      params.push(username);
+      addFilter(`dd.name = ?`, username);
     }
 
     // Explicit UI Filters
     if (divisionFilter && divisionFilter !== 'all') {
-      whereConditions.push(`LOWER(d.division) = LOWER($${paramIndex++})`);
-      params.push(divisionFilter);
+      addFilter(`LOWER(d.division) = LOWER(?)`, divisionFilter);
     }
     if (departmentFilter && departmentFilter !== 'all') {
-      whereConditions.push(`LOWER(d.department) = LOWER($${paramIndex++})`);
-      params.push(departmentFilter);
+      addFilter(`LOWER(d.department) = LOWER(?)`, departmentFilter);
     }
     if (nameFilter && nameFilter !== 'all') {
-      whereConditions.push(`LOWER(dd.name) = LOWER($${paramIndex++})`);
-      params.push(nameFilter);
+      addFilter(`LOWER(dd.name) = LOWER(?)`, nameFilter);
     }
 
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
     if (startDate && endDate) {
-      whereConditions.push(`dd.created_at >= $${paramIndex++} AND dd.created_at <= $${paramIndex++}`);
-      params.push(startDate, `${endDate} 23:59:59`);
+      addFilter(`dd.created_at >= ?`, startDate);
+      addFilter(`dd.created_at <= ?`, `${endDate} 23:59:59`);
     }
 
     if (search) {
-      const searchPlaceholder = `$${paramIndex++}`;
-      whereConditions.push(`(
-        LOWER(dd.name) LIKE ${searchPlaceholder} OR 
-        LOWER(dd.task_description) LIKE ${searchPlaceholder} OR 
-        LOWER(d.department) LIKE ${searchPlaceholder} OR 
-        LOWER(dd.given_by) LIKE ${searchPlaceholder} OR
-        CAST(dd.task_id AS TEXT) LIKE ${searchPlaceholder} OR
-        LOWER(d.unit) LIKE ${searchPlaceholder} OR
-        LOWER(d.division) LIKE ${searchPlaceholder}
-      )`);
-      params.push(`%${search.toLowerCase()}%`);
+      const searchVal = `%${search.toLowerCase()}%`;
+      const searchCondition = `(
+        LOWER(dd.name) LIKE ? OR 
+        LOWER(dd.task_description) LIKE ? OR 
+        LOWER(d.department) LIKE ? OR 
+        LOWER(dd.given_by) LIKE ? OR
+        CAST(dd.task_id AS TEXT) LIKE ? OR
+        LOWER(d.unit) LIKE ? OR
+        LOWER(d.division) LIKE ?
+      )`;
+      whereConditions.push(searchCondition.replace(/\?/g, () => `$${paramIndex++}`));
+      countWhereConditions.push(searchCondition.replace(/\?/g, () => `$${countParamIndex++}`));
+      for (let i = 0; i < 7; i++) {
+        params.push(searchVal);
+        countParams.push(searchVal);
+      }
     }
 
-    let whereClause = whereConditions.length > 0 ? ` WHERE ` + whereConditions.join(" AND ") : "";
+    const whereClause = whereConditions.length > 0 ? ` WHERE ` + whereConditions.join(" AND ") : "";
 
-    // --- COUNT QUERY (Directly from database for context) ---
-    let countWhereConditions = [];
-    const countParams = [];
-    let countParamIdx = 1;
-
-    if (upRole === "SUPER_ADMIN") {
-      // No filter
-    } else if (upRole === "DIV_ADMIN") {
-      countWhereConditions.push(`LOWER(d.unit) = LOWER($${countParamIdx++})`);
-      countParams.push(requesterUnit);
-      countWhereConditions.push(`LOWER(d.division) = LOWER($${countParamIdx++})`);
-      countParams.push(requesterDivision);
-    } else if (upRole === "ADMIN") {
-      countWhereConditions.push(`LOWER(d.unit) = LOWER($${countParamIdx++})`);
-      countParams.push(requesterUnit);
-      countWhereConditions.push(`LOWER(d.division) = LOWER($${countParamIdx++})`);
-      countParams.push(requesterDivision);
-      countWhereConditions.push(`LOWER(d.department) = LOWER($${countParamIdx++})`);
-      countParams.push(requesterDepartment || userAccess);
-    } else {
-      countWhereConditions.push(`dd.name = $${countParamIdx++}`);
-      countParams.push(username);
-    }
-
+    // --- COUNT QUERY ---
     const countWhereClause = countWhereConditions.length > 0 ? ` WHERE ` + countWhereConditions.join(" AND ") : "";
     const countQueryText = `
       SELECT 
@@ -177,8 +160,7 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
     const approvedCount = countRes.rows[0].approved_count || 0;
     const pendingCount = totalCount - approvedCount;
 
-    // --- DATA QUERY (Filtered for UI) ---
-    // Build the query using all filters
+    // --- DATA QUERY ---
     let query = `
       SELECT 
         dd.id,

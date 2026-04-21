@@ -218,8 +218,18 @@ export const getChecklistHistory = async (req, res) => {
 
     // Build WHERE clause
     const whereConditions = [`submission_date IS NOT NULL`];
+    const countWhereConditions = [`submission_date IS NOT NULL`];
     const params = [limit, offset];
+    const countParams = [];
     let paramIndex = 3; // $1=limit, $2=offset
+    let countParamIndex = 1;
+
+    const addFilter = (condition, value) => {
+      whereConditions.push(condition.replace(/\?/g, () => `$${paramIndex++}`));
+      countWhereConditions.push(condition.replace(/\?/g, () => `$${countParamIndex++}`));
+      params.push(value);
+      countParams.push(value);
+    };
 
     // Access Control Filters
     const upRole = role ? role.toUpperCase() : "USER";
@@ -227,102 +237,69 @@ export const getChecklistHistory = async (req, res) => {
       // No restricted filter
     } else if (upRole === "DIV_ADMIN" || upRole === "div_admin") {
       if (requesterUnit && requesterDivision) {
-        whereConditions.push(`LOWER(unit) = LOWER($${paramIndex++})`);
-        params.push(requesterUnit);
-        whereConditions.push(`LOWER(division) = LOWER($${paramIndex++})`);
-        params.push(requesterDivision);
+        addFilter(`LOWER(unit) = LOWER(?)`, requesterUnit);
+        addFilter(`LOWER(division) = LOWER(?)`, requesterDivision);
       }
     } else if (upRole === "ADMIN" || upRole === "admin") {
       if (requesterUnit && requesterDivision && (department || req.query.departmentFilter)) {
-        whereConditions.push(`LOWER(unit) = LOWER($${paramIndex++})`);
-        params.push(requesterUnit);
-        whereConditions.push(`LOWER(division) = LOWER($${paramIndex++})`);
-        params.push(requesterDivision);
-        whereConditions.push(`LOWER(department) = LOWER($${paramIndex++})`);
-        params.push(department || req.query.departmentFilter);
+        addFilter(`LOWER(unit) = LOWER(?)`, requesterUnit);
+        addFilter(`LOWER(division) = LOWER(?)`, requesterDivision);
+        addFilter(`LOWER(department) = LOWER(?)`, department || req.query.departmentFilter);
       } else if (department) {
-        whereConditions.push(`LOWER(department) = LOWER($${paramIndex++})`);
-        params.push(department);
+        addFilter(`LOWER(department) = LOWER(?)`, department);
       }
     } else if (username) {
-      whereConditions.push(`LOWER(name) = LOWER($${paramIndex++})`);
-      params.push(username);
+      addFilter(`LOWER(name) = LOWER(?)`, username);
     }
 
     // Explicit UI Filters
     if (divisionFilter && divisionFilter !== 'all') {
-      whereConditions.push(`LOWER(division) = LOWER($${paramIndex++})`);
-      params.push(divisionFilter);
+      addFilter(`LOWER(division) = LOWER(?)`, divisionFilter);
     }
     if (departmentFilter && departmentFilter !== 'all') {
-      whereConditions.push(`LOWER(department) = LOWER($${paramIndex++})`);
-      params.push(departmentFilter);
+      addFilter(`LOWER(department) = LOWER(?)`, departmentFilter);
     }
     if (nameFilter && nameFilter !== 'all') {
-      whereConditions.push(`LOWER(name) = LOWER($${paramIndex++})`);
-      params.push(nameFilter);
+      addFilter(`LOWER(name) = LOWER(?)`, nameFilter);
     }
 
     // ⭐ Date Filters
     if (startDate && endDate) {
-      whereConditions.push(`submission_date >= $${paramIndex++} AND submission_date <= $${paramIndex++}`);
-      params.push(startDate, `${endDate} 23:59:59`);
-    }
-
-    // ⭐ Approval Status Filter
-    if (approvalStatus === 'pending') {
-      whereConditions.push(`(admin_done IS NULL OR admin_done != 'Done')`);
-    } else if (approvalStatus === 'approved') {
-      whereConditions.push(`admin_done = 'Done'`);
+      addFilter(`submission_date >= ?`, startDate);
+      addFilter(`submission_date <= ?`, `${endDate} 23:59:59`);
     }
 
     if (search) {
-      const searchPlaceholder = `$${paramIndex++}`;
-      whereConditions.push(`(
-        LOWER(name) LIKE ${searchPlaceholder} OR 
-        LOWER(task_description) LIKE ${searchPlaceholder} OR 
-        LOWER(department) LIKE ${searchPlaceholder} OR 
-        LOWER(given_by) LIKE ${searchPlaceholder} OR
-        CAST(task_id AS TEXT) LIKE ${searchPlaceholder} OR
-        LOWER(unit) LIKE ${searchPlaceholder} OR
-        LOWER(division) LIKE ${searchPlaceholder}
-      )`);
-      params.push(`%${search.toLowerCase()}%`);
+      const searchVal = `%${search.toLowerCase()}%`;
+      const searchCondition = `(
+        LOWER(name) LIKE ? OR 
+        LOWER(task_description) LIKE ? OR 
+        LOWER(department) LIKE ? OR 
+        LOWER(given_by) LIKE ? OR
+        CAST(task_id AS TEXT) LIKE ? OR
+        LOWER(unit) LIKE ? OR
+        LOWER(division) LIKE ?
+      )`;
+      whereConditions.push(searchCondition.replace(/\?/g, () => `$${paramIndex++}`));
+      countWhereConditions.push(searchCondition.replace(/\?/g, () => `$${countParamIndex++}`));
+      // Push the same value for all 7 placeholders in the search condition
+      for (let i = 0; i < 7; i++) {
+        params.push(searchVal);
+        countParams.push(searchVal);
+      }
     }
 
-    const where = whereConditions.join(" AND ");
-
-    // --- COUNT QUERY (Directly from database for context) ---
-    const countWhereConditions = [`submission_date IS NOT NULL`];
-    const countParams = [];
-    let countParamIdx = 1;
-
-    if (upRole === "SUPER_ADMIN") {
-      // No restricted filter
-    } else if (upRole === "DIV_ADMIN") {
-      if (requesterUnit && requesterDivision) {
-        countWhereConditions.push(`LOWER(unit) = LOWER($${countParamIdx++})`);
-        countParams.push(requesterUnit);
-        countWhereConditions.push(`LOWER(division) = LOWER($${countParamIdx++})`);
-        countParams.push(requesterDivision);
-      }
-    } else if (upRole === "ADMIN") {
-      if (requesterUnit && requesterDivision && (department || req.query.departmentFilter)) {
-        countWhereConditions.push(`LOWER(unit) = LOWER($${countParamIdx++})`);
-        countParams.push(requesterUnit);
-        countWhereConditions.push(`LOWER(division) = LOWER($${countParamIdx++})`);
-        countParams.push(requesterDivision);
-        countWhereConditions.push(`LOWER(department) = LOWER($${countParamIdx++})`);
-        countParams.push(department || req.query.departmentFilter);
-      } else if (department) {
-        countWhereConditions.push(`LOWER(department) = LOWER($${countParamIdx++})`);
-        countParams.push(department);
-      }
-    } else if (username) {
-      countWhereConditions.push(`LOWER(name) = LOWER($${countParamIdx++})`);
-      countParams.push(username);
+    // Final main WHERE clause includes approvalStatus
+    const mainWhereConditions = [...whereConditions];
+    if (approvalStatus === 'pending') {
+      mainWhereConditions.push(`(admin_done IS NULL OR admin_done != 'Done')`);
+    } else if (approvalStatus === 'approved') {
+      mainWhereConditions.push(`admin_done = 'Done'`);
     }
 
+    const where = mainWhereConditions.join(" AND ");
+
+    // --- COUNT QUERY ---
     const countQueryText = `
       SELECT 
         COUNT(*)::INT as total_count,

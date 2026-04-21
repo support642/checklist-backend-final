@@ -288,6 +288,11 @@ export const getEmployeeHistoryDetail = async (req, res) => {
     }
 
     // 3. Authorization Passed -> Fetch Data
+    const { page = 1, limit = 10 } = req.query;
+    const paginationPage = parseInt(page);
+    const paginationLimit = parseInt(limit);
+    const offset = (paginationPage - 1) * paginationLimit;
+
     const query = `
       SELECT 
         id, 
@@ -299,9 +304,19 @@ export const getEmployeeHistoryDetail = async (req, res) => {
       FROM working_date_history
       WHERE user_name = $1
       ORDER BY work_datetime DESC
+      LIMIT $2 OFFSET $3
     `;
-    const { rows } = await pool.query(query, [targetUsername]);
-    res.json(rows);
+    const { rows } = await pool.query(query, [targetUsername, paginationLimit, offset]);
+    
+    // Check if more records exist
+    const hasMore = rows.length === paginationLimit;
+
+    res.json({
+      data: rows,
+      hasMore,
+      page: paginationPage,
+      limit: paginationLimit
+    });
 
   } catch (err) {
     console.error("Get Detail Error:", err);

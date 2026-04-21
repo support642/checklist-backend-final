@@ -340,10 +340,10 @@ export const getCompletedTask = async (req, res) => {
       // Delegation: Completed tasks (has submission date) 
       // Should we limit to month too? The current month logic for delegation includes all completed.
       query += ` AND submission_date IS NOT NULL `;
-      
+
       let start = startDate || firstDayStr;
       let end = endDate || currentDayStr;
-      
+
       query += ` AND (${dateCol}::date >= '${start}' AND ${dateCol}::date <= '${end}' OR submission_date IS NOT NULL)`;
     }
 

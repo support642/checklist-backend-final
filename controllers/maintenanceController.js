@@ -182,122 +182,92 @@ export const getMaintenanceHistory = async (req, res) => {
 
         const limit = parseInt(req.query.limit) || 50;
         const offset = (page - 1) * limit;
-
-        const params = [limit, offset];
-        let paramIndex = 3;
-
-        let whereConditions = [`t.submission_date IS NOT NULL`];
-
-        if (startDate && endDate) {
-            whereConditions.push(`t.submission_date >= $${paramIndex++} AND t.submission_date <= $${paramIndex++}`);
-            params.push(startDate, `${endDate} 23:59:59`);
-        }
-
         const requesterUnit = req.query.unit;
         const requesterDivision = req.query.division;
         const divisionFilter = req.query.divisionFilter;
         const departmentFilter = req.query.departmentFilter;
         const nameFilter = req.query.nameFilter;
 
-        const upRole = (role || "").toUpperCase();
-
-        if (upRole === "SUPER_ADMIN") {
-            // No additional filter
-        }
-        else if (upRole === "DIV_ADMIN") {
-            if (requesterUnit && requesterDivision) {
-                whereConditions.push(`LOWER(t.unit) = LOWER($${paramIndex++})`);
-                params.push(requesterUnit);
-                whereConditions.push(`LOWER(t.division) = LOWER($${paramIndex++})`);
-                params.push(requesterDivision);
-            }
-        }
-        else if (upRole === "ADMIN") {
-            if (requesterUnit && requesterDivision && (department || req.query.departmentFilter)) {
-                whereConditions.push(`LOWER(t.unit) = LOWER($${paramIndex++})`);
-                params.push(requesterUnit);
-                whereConditions.push(`LOWER(t.division) = LOWER($${paramIndex++})`);
-                params.push(requesterDivision);
-                whereConditions.push(`LOWER(t.department) = LOWER($${paramIndex++})`);
-                params.push(department || req.query.departmentFilter);
-            } else if (department) {
-                whereConditions.push(`LOWER(t.department) = LOWER($${paramIndex++})`);
-                params.push(department);
-            }
-        }
-        else if (username) {
-            whereConditions.push(`LOWER(t.name) = LOWER($${paramIndex++})`);
-            params.push(username);
-        }
-
-        // ⭐ UI Filters
-        if (divisionFilter && divisionFilter !== 'all') {
-            whereConditions.push(`LOWER(t.division) = LOWER($${paramIndex++})`);
-            params.push(divisionFilter);
-        }
-        if (departmentFilter && departmentFilter !== 'all') {
-            whereConditions.push(`LOWER(t.department) = LOWER($${paramIndex++})`);
-            params.push(departmentFilter);
-        }
-        if (nameFilter && nameFilter !== 'all') {
-            whereConditions.push(`LOWER(t.name) = LOWER($${paramIndex++})`);
-            params.push(nameFilter);
-        }
-
-        if (search) {
-            const searchPlaceholder = `$${paramIndex++}`;
-            whereConditions.push(`(
-                LOWER(t.name) LIKE ${searchPlaceholder} OR 
-                LOWER(t.task_description) LIKE ${searchPlaceholder} OR 
-                LOWER(t.department) LIKE ${searchPlaceholder} OR 
-                LOWER(t.given_by) LIKE ${searchPlaceholder} OR
-                LOWER(COALESCE(mp.machine_name, t.machine_name)) LIKE ${searchPlaceholder} OR
-                LOWER(COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', '))) LIKE ${searchPlaceholder} OR
-                CAST(t.id AS TEXT) LIKE ${searchPlaceholder} OR
-                LOWER(t.unit) LIKE ${searchPlaceholder} OR
-                LOWER(t.division) LIKE ${searchPlaceholder}
-            )`);
-            params.push(`%${search.toLowerCase()}%`);
-        }
-
-        let whereClause = whereConditions.join(" AND ");
-
-        // --- COUNT QUERY (Directly from database for context) ---
-        let countWhereConditions = [`t.submission_date IS NOT NULL`];
+        const whereConditions = [`t.submission_date IS NOT NULL`];
+        const countWhereConditions = [`t.submission_date IS NOT NULL`];
+        const params = [limit, offset];
         const countParams = [];
+        let paramIndex = 3;
         let countParamIndex = 1;
 
+        const addFilter = (condition, value) => {
+            whereConditions.push(condition.replace(/\?/g, () => `$${paramIndex++}`));
+            countWhereConditions.push(condition.replace(/\?/g, () => `$${countParamIndex++}`));
+            params.push(value);
+            countParams.push(value);
+        };
+
+        if (startDate && endDate) {
+            addFilter(`t.submission_date >= ?`, startDate);
+            addFilter(`t.submission_date <= ?`, `${endDate} 23:59:59`);
+        }
+
+        const upRole = (role || "").toUpperCase();
         if (upRole === "SUPER_ADMIN") {
             // No additional filter
         } else if (upRole === "DIV_ADMIN") {
             if (requesterUnit && requesterDivision) {
-                countWhereConditions.push(`LOWER(t.unit) = LOWER($${countParamIndex++})`);
-                countParams.push(requesterUnit);
-                countWhereConditions.push(`LOWER(t.division) = LOWER($${countParamIndex++})`);
-                countParams.push(requesterDivision);
+                addFilter(`LOWER(t.unit) = LOWER(?)`, requesterUnit);
+                addFilter(`LOWER(t.division) = LOWER(?)`, requesterDivision);
             }
         } else if (upRole === "ADMIN") {
             if (requesterUnit && requesterDivision && (department || req.query.departmentFilter)) {
-                countWhereConditions.push(`LOWER(t.unit) = LOWER($${countParamIndex++})`);
-                countParams.push(requesterUnit);
-                countWhereConditions.push(`LOWER(t.division) = LOWER($${countParamIndex++})`);
-                countParams.push(requesterDivision);
-                countWhereConditions.push(`LOWER(t.department) = LOWER($${countParamIndex++})`);
-                countParams.push(department || req.query.departmentFilter);
+                addFilter(`LOWER(t.unit) = LOWER(?)`, requesterUnit);
+                addFilter(`LOWER(t.division) = LOWER(?)`, requesterDivision);
+                addFilter(`LOWER(t.department) = LOWER(?)`, department || req.query.departmentFilter);
             } else if (department) {
-                countWhereConditions.push(`LOWER(t.department) = LOWER($${countParamIndex++})`);
-                countParams.push(department);
+                addFilter(`LOWER(t.department) = LOWER(?)`, department);
             }
         } else if (username) {
-            countWhereConditions.push(`LOWER(t.name) = LOWER($${countParamIndex++})`);
-            countParams.push(username);
+            addFilter(`LOWER(t.name) = LOWER(?)`, username);
         }
 
+        // ⭐ UI Filters
+        if (divisionFilter && divisionFilter !== 'all') {
+            addFilter(`LOWER(t.division) = LOWER(?)`, divisionFilter);
+        }
+        if (departmentFilter && departmentFilter !== 'all') {
+            addFilter(`LOWER(t.department) = LOWER(?)`, departmentFilter);
+        }
+        if (nameFilter && nameFilter !== 'all') {
+            addFilter(`LOWER(t.name) = LOWER(?)`, nameFilter);
+        }
+
+        if (search) {
+            const searchVal = `%${search.toLowerCase()}%`;
+            const searchCondition = `(
+                LOWER(t.name) LIKE ? OR 
+                LOWER(t.task_description) LIKE ? OR 
+                LOWER(t.department) LIKE ? OR 
+                LOWER(t.given_by) LIKE ? OR
+                LOWER(COALESCE(mp.machine_name, t.machine_name)) LIKE ? OR
+                LOWER(COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', '))) LIKE ? OR
+                CAST(t.id AS TEXT) LIKE ? OR
+                LOWER(t.unit) LIKE ? OR
+                LOWER(t.division) LIKE ?
+            )`;
+            whereConditions.push(searchCondition.replace(/\?/g, () => `$${paramIndex++}`));
+            countWhereConditions.push(searchCondition.replace(/\?/g, () => `$${countParamIndex++}`));
+            for (let i = 0; i < 9; i++) {
+                params.push(searchVal);
+                countParams.push(searchVal);
+            }
+        }
+
+        const whereClause = whereConditions.join(" AND ");
+
+        // --- COUNT QUERY ---
         const countQueryText = `
             SELECT 
                 COUNT(*)::INT as total_count,
                 SUM(CASE WHEN t.admin_done = 'true' OR t.admin_done = 'Done' THEN 1 ELSE 0 END)::INT as approved_count
             FROM maintenance_tasks t
+            LEFT JOIN machine_parts mp ON t.machine_part_id = mp.id
             WHERE ${countWhereConditions.join(" AND ")}
         `;
         const countRes = await pool.query(countQueryText, countParams);
