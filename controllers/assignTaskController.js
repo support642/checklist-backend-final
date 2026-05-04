@@ -122,15 +122,40 @@ export const getUniqueDoerNames = async (req, res) => {
 // 3b️⃣ All Doer Names (no department filter)
 export const getAllDoerNames = async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT DISTINCT user_name
-       FROM users 
-       WHERE status='active'
-       ORDER BY user_name ASC`
-    );
+    const { role, division, department } = req.query;
+    const upRole = (role || "").toUpperCase();
+
+    let query = `SELECT DISTINCT user_name FROM users WHERE status='active'`;
+    const params = [];
+
+    if (upRole === "SUPER_ADMIN" || upRole === "super_admin") {
+      // No filter
+    } else if (upRole === "DIV_ADMIN" || upRole === "div_admin") {
+      if (division) {
+        query += ` AND LOWER(division) = LOWER($1)`;
+        params.push(division);
+      }
+    } else if (upRole === "ADMIN" || upRole === "admin") {
+      if (division && department) {
+        query += ` AND LOWER(division) = LOWER($1) AND LOWER(department) = LOWER($2)`;
+        params.push(division, department);
+      } else if (department) {
+        query += ` AND LOWER(department) = LOWER($1)`;
+        params.push(department);
+      }
+    } else {
+      // Default fallback or USER role (though usually history doesn't call this for USER in a broad way)
+      // If we want to restrict to self:
+      // query += ` AND LOWER(user_name) = LOWER($1)`;
+      // params.push(req.query.username);
+    }
+
+    query += ` ORDER BY user_name ASC`;
+
+    const result = await pool.query(query, params);
     res.json(result.rows.map(r => ({ user_name: r.user_name })));
   } catch (e) {
-    console.error(e);
+    console.error("❌ Error in getAllDoerNames:", e);
     res.status(500).send("Server Error");
   }
 };

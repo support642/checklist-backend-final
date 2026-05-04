@@ -33,13 +33,20 @@ export const getPendingMaintenanceTasks = async (req, res) => {
             queryParams.push(startDate, `${endDate} 23:59:59`);
         }
 
-        // ⭐ Status Filter (Today, Overdue, Upcoming)
+        // ⭐ Status Filter (Today, Overdue, Upcoming, Leave, Day off)
         if (status === "today") {
-            where += ` AND DATE(t.task_start_date) = CURRENT_DATE `;
+            where += ` AND DATE(t.task_start_date) = CURRENT_DATE AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive')) `;
         } else if (status === "overdue") {
-            where += ` AND DATE(t.task_start_date) < CURRENT_DATE `;
+            where += ` AND DATE(t.task_start_date) < CURRENT_DATE AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive')) `;
         } else if (status === "upcoming") {
-            where += ` AND DATE(t.task_start_date) > CURRENT_DATE `;
+            where += ` AND DATE(t.task_start_date) > CURRENT_DATE AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive')) `;
+        } else if (status === "leave") {
+            where += ` AND LOWER(t.status::text) = 'leave' `;
+        } else if (status === "inactive") {
+            where += ` AND LOWER(t.status::text) = 'inactive' `;
+        } else {
+            // Default 'all' view: exclude leave and inactive tasks
+            where += ` AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive')) `;
         }
 
         // ⭐ Frequency Filter
@@ -74,14 +81,14 @@ export const getPendingMaintenanceTasks = async (req, res) => {
             // No additional filter
         }
         else if (upRole === "DIV_ADMIN") {
-            if (requesterUnit && requesterDivision) {
-                where += ` AND LOWER(t.unit) = LOWER('${requesterUnit.replace(/'/g, "''")}') AND LOWER(t.division) = LOWER('${requesterDivision.replace(/'/g, "''")}') `;
+            if (requesterDivision) {
+                where += ` AND LOWER(t.division) = LOWER('${requesterDivision.replace(/'/g, "''")}') `;
             }
         }
         else if (upRole === "ADMIN") {
-            if (requesterUnit && requesterDivision && department) {
+            if (requesterDivision && department) {
                 const deptEscaped = department.replace(/'/g, "''");
-                where += ` AND LOWER(t.unit) = LOWER('${requesterUnit.replace(/'/g, "''")}') AND LOWER(t.division) = LOWER('${requesterDivision.replace(/'/g, "''")}') AND LOWER(t.department) = LOWER('${deptEscaped}') `;
+                where += ` AND LOWER(t.division) = LOWER('${requesterDivision.replace(/'/g, "''")}') AND LOWER(t.department) = LOWER('${deptEscaped}') `;
             } else if (department) {
                 const deptEscaped = department.replace(/'/g, "''");
                 where += ` AND LOWER(t.department) = LOWER('${deptEscaped}') `;
@@ -211,13 +218,11 @@ export const getMaintenanceHistory = async (req, res) => {
         if (upRole === "SUPER_ADMIN") {
             // No additional filter
         } else if (upRole === "DIV_ADMIN") {
-            if (requesterUnit && requesterDivision) {
-                addFilter(`LOWER(t.unit) = LOWER(?)`, requesterUnit);
+            if (requesterDivision) {
                 addFilter(`LOWER(t.division) = LOWER(?)`, requesterDivision);
             }
         } else if (upRole === "ADMIN") {
-            if (requesterUnit && requesterDivision && (department || req.query.departmentFilter)) {
-                addFilter(`LOWER(t.unit) = LOWER(?)`, requesterUnit);
+            if (requesterDivision && (department || req.query.departmentFilter)) {
                 addFilter(`LOWER(t.division) = LOWER(?)`, requesterDivision);
                 addFilter(`LOWER(t.department) = LOWER(?)`, department || req.query.departmentFilter);
             } else if (department) {
@@ -860,5 +865,68 @@ export const sendMaintenanceNotification = async (req, res) => {
     } catch (err) {
         console.error("❌ sendMaintenanceNotification Error:", err);
         res.status(500).json({ error: err.message });
+    }
+};
+// -----------------------------------------
+// 14️⃣ BULK TOGGLE DAY OFF (INACTIVE) MAINTENANCE
+// -----------------------------------------
+export const bulkDeleteMaintenance = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { taskIds } = req.body;
+        if (!Array.isArray(taskIds) || taskIds.length === 0) {
+            return res.status(400).json({ error: "No task IDs provided" });
+        }
+
+        await client.query("BEGIN");
+        // Toggle status: If 'Inactive' set to 'Pending', else set to 'Inactive'
+        const query = `
+            UPDATE maintenance_tasks 
+            SET status = CASE 
+                WHEN status = 'Inactive' THEN 'Pending' 
+                ELSE 'Inactive' 
+            END
+            WHERE id = ANY($1)
+        `;
+        const { rowCount } = await client.query(query, [taskIds]);
+        await client.query("COMMIT");
+
+        res.json({ message: `Successfully toggled ${rowCount} tasks for Day Off`, updatedCount: rowCount });
+    } catch (error) {
+        await client.query("ROLLBACK");
+        console.error("❌ Error in bulkDeleteMaintenance:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    } finally {
+        client.release();
+    }
+};
+
+// -----------------------------------------
+// 15️⃣ BULK LEAVE MAINTENANCE
+// -----------------------------------------
+export const bulkLeaveMaintenance = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { taskIds } = req.body;
+        if (!Array.isArray(taskIds) || taskIds.length === 0) {
+            return res.status(400).json({ error: "No task IDs provided" });
+        }
+
+        await client.query("BEGIN");
+        const query = `
+            UPDATE maintenance_tasks 
+            SET status = 'Leave'
+            WHERE id = ANY($1)
+        `;
+        const { rowCount } = await client.query(query, [taskIds]);
+        await client.query("COMMIT");
+
+        res.json({ message: `Successfully marked ${rowCount} tasks as Leave`, updatedCount: rowCount });
+    } catch (error) {
+        await client.query("ROLLBACK");
+        console.error("❌ Error in bulkLeaveMaintenance:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    } finally {
+        client.release();
     }
 };

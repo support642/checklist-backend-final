@@ -26,13 +26,20 @@ export const getPendingChecklist = async (req, res) => {
 
     where += ` AND DATE(task_start_date) <= CURRENT_DATE + INTERVAL '1 day' `;
 
-    // ⭐ Status Filter (Today, Overdue, Upcoming)
+    // ⭐ Status Filter (Today, Overdue, Upcoming, Leave, Day off)
     if (status === "today") {
-      where += ` AND DATE(task_start_date) = CURRENT_DATE `;
+      where += ` AND DATE(task_start_date) = CURRENT_DATE AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive')) `;
     } else if (status === "overdue") {
-      where += ` AND DATE(task_start_date) < CURRENT_DATE `;
+      where += ` AND DATE(task_start_date) < CURRENT_DATE AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive')) `;
     } else if (status === "upcoming") {
-      where += ` AND DATE(task_start_date) > CURRENT_DATE `;
+      where += ` AND DATE(task_start_date) > CURRENT_DATE AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive')) `;
+    } else if (status === "leave") {
+      where += ` AND LOWER(status::text) = 'leave' `;
+    } else if (status === "inactive") {
+      where += ` AND LOWER(status::text) = 'inactive' `;
+    } else {
+      // Default 'all' view: exclude leave and inactive tasks
+      where += ` AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive')) `;
     }
 
     // ⭐ Frequency Filter
@@ -68,13 +75,13 @@ export const getPendingChecklist = async (req, res) => {
     if (upRole === "SUPER_ADMIN") {
       // All access
     } else if (upRole === "DIV_ADMIN") {
-      if (requesterUnit && requesterDivision) {
-        where += ` AND LOWER(unit) = LOWER('${requesterUnit.replace(/'/g, "''")}') AND LOWER(division) = LOWER('${requesterDivision.replace(/'/g, "''")}') `;
+      if (requesterDivision) {
+        where += ` AND LOWER(division) = LOWER('${requesterDivision.replace(/'/g, "''")}') `;
       }
     } else if (upRole === "ADMIN") {
-      if (requesterUnit && requesterDivision && requesterDepartment) {
+      if (requesterDivision && requesterDepartment) {
         const deptEscaped = requesterDepartment.replace(/'/g, "''");
-        where += ` AND LOWER(unit) = LOWER('${requesterUnit.replace(/'/g, "''")}') AND LOWER(division) = LOWER('${requesterDivision.replace(/'/g, "''")}') AND LOWER(department) = LOWER('${deptEscaped}') `;
+        where += ` AND LOWER(division) = LOWER('${requesterDivision.replace(/'/g, "''")}') AND LOWER(department) = LOWER('${deptEscaped}') `;
       } else if (requesterDepartment) {
         const deptEscaped = requesterDepartment.replace(/'/g, "''");
         where += ` AND LOWER(department) = LOWER('${deptEscaped}') `;
@@ -236,13 +243,11 @@ export const getChecklistHistory = async (req, res) => {
     if (upRole === "SUPER_ADMIN" || upRole === "super_admin") {
       // No restricted filter
     } else if (upRole === "DIV_ADMIN" || upRole === "div_admin") {
-      if (requesterUnit && requesterDivision) {
-        addFilter(`LOWER(unit) = LOWER(?)`, requesterUnit);
+      if (requesterDivision) {
         addFilter(`LOWER(division) = LOWER(?)`, requesterDivision);
       }
     } else if (upRole === "ADMIN" || upRole === "admin") {
-      if (requesterUnit && requesterDivision && (department || req.query.departmentFilter)) {
-        addFilter(`LOWER(unit) = LOWER(?)`, requesterUnit);
+      if (requesterDivision && (department || req.query.departmentFilter)) {
         addFilter(`LOWER(division) = LOWER(?)`, requesterDivision);
         addFilter(`LOWER(department) = LOWER(?)`, department || req.query.departmentFilter);
       } else if (department) {
@@ -646,5 +651,68 @@ export const getChecklistMetadata = async (req, res) => {
   } catch (error) {
     console.error("❌ Error fetching checklist metadata:", error);
     res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+// -----------------------------------------
+// 7️⃣ BULK TOGGLE DAY OFF (INACTIVE) CHECKLIST
+// -----------------------------------------
+export const bulkDeleteChecklist = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskIds } = req.body;
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+      return res.status(400).json({ error: "No task IDs provided" });
+    }
+
+    await client.query("BEGIN");
+    // Toggle status: If 'Inactive' set to NULL (Pending), else set to 'Inactive'
+    const query = `
+      UPDATE checklist 
+      SET status = CASE 
+        WHEN status = 'Inactive' THEN NULL 
+        ELSE 'Inactive'::enable_reminder 
+      END
+      WHERE task_id = ANY($1)
+    `;
+    const { rowCount } = await client.query(query, [taskIds]);
+    await client.query("COMMIT");
+
+    res.json({ message: `Successfully toggled ${rowCount} tasks for Day Off`, updatedCount: rowCount });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("❌ Error in bulkDeleteChecklist:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  } finally {
+    client.release();
+  }
+};
+
+// -----------------------------------------
+// 8️⃣ BULK LEAVE CHECKLIST
+// -----------------------------------------
+export const bulkLeaveChecklist = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { taskIds } = req.body;
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+      return res.status(400).json({ error: "No task IDs provided" });
+    }
+
+    await client.query("BEGIN");
+    const query = `
+      UPDATE checklist 
+      SET status = 'Leave'::enable_reminder
+      WHERE task_id = ANY($1)
+    `;
+    const { rowCount } = await client.query(query, [taskIds]);
+    await client.query("COMMIT");
+
+    res.json({ message: `Successfully marked ${rowCount} tasks as Leave`, updatedCount: rowCount });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("❌ Error in bulkLeaveChecklist:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  } finally {
+    client.release();
   }
 };

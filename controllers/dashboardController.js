@@ -122,6 +122,9 @@ export const getDashboardData = async (req, res) => {
     // Use planned_date for delegation, task_start_date for checklist
     const dateCol = dashboardType === "delegation" ? `${table}.planned_date` : `${table}.task_start_date`;
 
+    // Exclude Leave and Inactive (Day Off) tasks from main views
+    query += ` AND (${table}.status IS NULL OR LOWER(${table}.status::text) NOT IN ('leave', 'inactive')) `;
+
     if (taskView === "recent") {
       // TODAY TASKS
       query += `
@@ -130,7 +133,6 @@ export const getDashboardData = async (req, res) => {
 
       // For checklist: status is enum 'yes'/'no', compare directly
       if (dashboardType === "checklist") {
-        // query += ` AND (status IS NULL OR status <> 'yes')`;
         query += ` AND ${table}.submission_date IS NULL`;
       }
     }
@@ -142,7 +144,6 @@ export const getDashboardData = async (req, res) => {
 
       // For checklist: exclude completed tasks
       if (dashboardType === "checklist") {
-        // query += ` AND (status IS NULL OR status <> 'yes')`;
         query += ` AND ${table}.submission_date IS NULL`;
       }
     }
@@ -153,7 +154,6 @@ export const getDashboardData = async (req, res) => {
       `;
 
       if (dashboardType === "checklist") {
-        // query += ` AND (status IS NULL OR status <> 'yes')`;
         query += ` AND ${table}.submission_date IS NULL`;
       } else {
         query += ` AND ${table}.submission_date IS NULL`;
@@ -233,7 +233,7 @@ export const getTotalTask = async (req, res) => {
     let query = `
       SELECT COUNT(*) AS count
       FROM ${table}
-      WHERE 
+      WHERE (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive')) AND
     `;
 
     if (dashboardType === "delegation") {
@@ -326,7 +326,7 @@ export const getCompletedTask = async (req, res) => {
     let query = `
       SELECT COUNT(*) AS count
       FROM ${table}
-      WHERE 1=1
+      WHERE (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive'))
     `;
 
     if (dashboardType === "checklist") {
@@ -338,7 +338,6 @@ export const getCompletedTask = async (req, res) => {
       query += ` AND status = 'yes' AND submission_date IS NOT NULL `;
     } else {
       // Delegation: Completed tasks (has submission date) 
-      // Should we limit to month too? The current month logic for delegation includes all completed.
       query += ` AND submission_date IS NOT NULL `;
 
       let start = startDate || firstDayStr;
@@ -442,7 +441,7 @@ export const getPendingTask = async (req, res) => {
     let query = `
       SELECT COUNT(*) AS count
       FROM ${table}
-      WHERE submission_date IS NULL
+      WHERE submission_date IS NULL AND (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive'))
     `;
 
     if (dashboardType === "checklist") {
@@ -521,7 +520,7 @@ export const getNotDoneTask = async (req, res) => {
     let query = `
       SELECT COUNT(*) AS count
       FROM ${table}
-      WHERE 1=1
+      WHERE (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive'))
     `;
 
     if (dashboardType === "delegation") {
@@ -604,6 +603,7 @@ export const getOverdueTask = async (req, res) => {
         WHERE ${dateCol}::date >= '${startDate}'
         AND ${dateCol}::date <= '${endDate}'
         AND submission_date IS NULL
+        AND (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive'))
         AND ${dateCol}::date < CURRENT_DATE
       `;
     } else {
@@ -612,6 +612,7 @@ export const getOverdueTask = async (req, res) => {
         FROM ${table}
         WHERE ${dateCol}::date < CURRENT_DATE
         AND submission_date IS NULL
+        AND (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive'))
       `;
     }
 
@@ -829,13 +830,14 @@ export const getChecklistStatsByDate = async (req, res) => {
         SUM(CASE WHEN LOWER(status::text) = 'no' THEN 1 ELSE 0 END) AS not_done_tasks,
         SUM(
           CASE 
-            WHEN (status IS NULL OR LOWER(status::text) <> 'yes')
+            WHEN (status IS NULL OR LOWER(status::text) NOT IN ('yes', 'leave', 'inactive'))
               AND task_start_date::date < CURRENT_DATE
             THEN 1 ELSE 0 END
         ) AS overdue_tasks
       FROM checklist
       WHERE task_start_date::date >= $1::date
       AND task_start_date::date <= $2::date
+      AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive'))
     `;
 
     const upRole = req.query.role ? req.query.role.toUpperCase() : "USER";
@@ -922,7 +924,7 @@ export const getStaffTaskSummary = async (req, res) => {
         ) AS completed
       FROM ${table} t
       LEFT JOIN users u ON LOWER(t.name) = LOWER(u.user_name)
-      WHERE 
+      WHERE (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive')) AND
     `;
 
     if (dashboardType === "delegation") {
@@ -1012,7 +1014,7 @@ export const getDashboardDataCount = async (req, res) => {
     let query = `
       SELECT COUNT(*) AS count
       FROM ${dashboardType}
-      WHERE 1=1
+      WHERE (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive'))
     `;
 
     const upRole = role ? role.toUpperCase() : "USER";
@@ -1160,13 +1162,14 @@ export const getChecklistDateRangeCount = async (req, res) => {
         query += ` AND LOWER(status::text) = 'yes'`;
         break;
       case "pending":
-        query += ` AND (status IS NULL OR LOWER(status::text) <> 'yes')`;
+        query += ` AND (status IS NULL OR LOWER(status::text) <> 'yes') AND LOWER(status::text) <> 'leave'`;
         break;
       case "overdue":
         query += ` 
           AND (status IS NULL OR LOWER(status::text) <> 'yes')
           AND submission_date IS NULL
           AND task_start_date < CURRENT_DATE
+          AND LOWER(status::text) <> 'leave'
         `;
         break;
     }

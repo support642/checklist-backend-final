@@ -6,7 +6,9 @@ import {
   adminDoneChecklist,
   deleteChecklistInRange,
   sendEmailNotification,
-  getChecklistMetadata
+  getChecklistMetadata,
+  bulkDeleteChecklist,
+  bulkLeaveChecklist
 } from "../controllers/checklistController.js";
 
 const router = express.Router();
@@ -18,5 +20,7 @@ router.post("/update", updateChecklist);
 router.post("/delete-range", deleteChecklistInRange);
 router.post("/admin-done", adminDoneChecklist);
 router.post("/send-email", sendEmailNotification);
+router.post("/bulk-delete", bulkDeleteChecklist);
+router.post("/bulk-leave", bulkLeaveChecklist);
 
 export default router;

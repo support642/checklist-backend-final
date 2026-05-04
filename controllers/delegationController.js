@@ -32,16 +32,16 @@ export const fetchDelegationDataSortByDate = async (req, res) => {
     if (upRole === "SUPER_ADMIN") {
       query = `SELECT * FROM delegation WHERE ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
     } else if (upRole === "DIV_ADMIN") {
-      query = `SELECT * FROM delegation WHERE LOWER(unit)=LOWER($1) AND LOWER(division)=LOWER($2) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
+      query = `SELECT * FROM delegation WHERE LOWER(division)=LOWER($1) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
     } else if (upRole === "ADMIN") {
-      query = `SELECT * FROM delegation WHERE LOWER(unit)=LOWER($1) AND LOWER(division)=LOWER($2) AND LOWER(department)=LOWER($3) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
+      query = `SELECT * FROM delegation WHERE LOWER(division)=LOWER($1) AND LOWER(department)=LOWER($2) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
     } else {
       query = `SELECT * FROM delegation WHERE name = $1 AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
     }
 
     let params_val = [];
-    if (upRole === "DIV_ADMIN") params_val = [requesterUnit, requesterDivision];
-    else if (upRole === "ADMIN") params_val = [requesterUnit, requesterDivision, requesterDepartment];
+    if (upRole === "DIV_ADMIN") params_val = [requesterDivision];
+    else if (upRole === "ADMIN") params_val = [requesterDivision, requesterDepartment];
     else if (upRole === "SUPER_ADMIN") params_val = [];
     else params_val = [username || ""];
 
@@ -96,10 +96,8 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
     if (upRole === "SUPER_ADMIN" || upRole === "super_admin") {
       // No filter
     } else if (upRole === "DIV_ADMIN" || upRole === "div_admin") {
-      addFilter(`LOWER(d.unit) = LOWER(?)`, requesterUnit);
       addFilter(`LOWER(d.division) = LOWER(?)`, requesterDivision);
     } else if (upRole === "ADMIN" || upRole === "admin") {
-      addFilter(`LOWER(d.unit) = LOWER(?)`, requesterUnit);
       addFilter(`LOWER(d.division) = LOWER(?)`, requesterDivision);
       addFilter(`LOWER(d.department) = LOWER(?)`, requesterDepartment || userAccess);
     } else {
