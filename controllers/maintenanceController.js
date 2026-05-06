@@ -44,6 +44,8 @@ export const getPendingMaintenanceTasks = async (req, res) => {
             where += ` AND LOWER(t.status::text) = 'leave' `;
         } else if (status === "inactive") {
             where += ` AND LOWER(t.status::text) = 'inactive' `;
+        } else if (status === "activation_pending") {
+            where += ` AND LOWER(t.status::text) = 'activation_pending' `;
         } else {
             // Default 'all' view: exclude leave and inactive tasks
             where += ` AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive')) `;
@@ -154,7 +156,8 @@ export const getPendingMaintenanceTasks = async (req, res) => {
           WHEN DATE(t.task_start_date) = CURRENT_DATE THEN 1
           ELSE 2 
         END,
-        t.task_start_date ASC
+        t.task_start_date ASC,
+        t.id ASC
       LIMIT $1 OFFSET $2
     `;
 
@@ -873,22 +876,25 @@ export const sendMaintenanceNotification = async (req, res) => {
 export const bulkDeleteMaintenance = async (req, res) => {
     const client = await pool.connect();
     try {
-        const { taskIds } = req.body;
+        const { taskIds, role } = req.body;
         if (!Array.isArray(taskIds) || taskIds.length === 0) {
             return res.status(400).json({ error: "No task IDs provided" });
         }
 
         await client.query("BEGIN");
-        // Toggle status: If 'Inactive' set to 'Pending', else set to 'Inactive'
+        // Logic: 
+        // 1. If currently Inactive or Activation_Pending, move to Pending (active) if Admin, else move to Activation_Pending
+        // 2. If currently anything else, move to Inactive
         const query = `
             UPDATE maintenance_tasks 
             SET status = CASE 
-                WHEN status = 'Inactive' THEN 'Pending' 
+                WHEN status IN ('Inactive', 'Activation_Pending') THEN 
+                    CASE WHEN $2 = ANY(ARRAY['SUPER_ADMIN', 'ADMIN', 'DIV_ADMIN']) THEN 'Pending' ELSE 'Activation_Pending' END
                 ELSE 'Inactive' 
             END
             WHERE id = ANY($1)
         `;
-        const { rowCount } = await client.query(query, [taskIds]);
+        const { rowCount } = await client.query(query, [taskIds, (role || "").toUpperCase()]);
         await client.query("COMMIT");
 
         res.json({ message: `Successfully toggled ${rowCount} tasks for Day Off`, updatedCount: rowCount });
@@ -898,6 +904,16 @@ export const bulkDeleteMaintenance = async (req, res) => {
         res.status(500).json({ error: "Internal Server Error" });
     } finally {
         client.release();
+    }
+};
+
+export const approveActivationMaintenance = async (req, res) => {
+    const { taskIds } = req.body;
+    try {
+        await pool.query("UPDATE maintenance_tasks SET status = 'Pending' WHERE id = ANY($1)", [taskIds]);
+        res.json({ message: "Maintenance tasks activated successfully" });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 };
 

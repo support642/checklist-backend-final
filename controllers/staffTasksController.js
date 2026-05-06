@@ -56,6 +56,7 @@ export const getStaffTasks = async (req, res) => {
         WHERE t.name IS NOT NULL
         AND t.name != ''
         AND t.${dateCol} IS NOT NULL
+        AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
         AND t.${dateCol} <= NOW()
       `;
     } else {
@@ -66,6 +67,7 @@ export const getStaffTasks = async (req, res) => {
         WHERE t.name IS NOT NULL
         AND t.name != ''
         AND t.${dateCol} IS NOT NULL
+        AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
         AND t.${dateCol} <= NOW()
       `;
 
@@ -218,7 +220,7 @@ export const getStaffTasks = async (req, res) => {
       const tp = [];
       let tc = 1;
 
-      taskQuery += ` WHERE LOWER(name)=LOWER($${tc})`;
+      taskQuery += ` WHERE LOWER(name)=LOWER($${tc}) AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive'))`;
       tp.push(staffName);
       tc++;
 
@@ -352,6 +354,7 @@ export const getStaffDetails = async (req, res) => {
       FROM ${table} t
       LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
       WHERE TRIM(LOWER(t.name)) = TRIM(LOWER($1))
+      AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
     `;
 
     const params = [staffName];
@@ -452,6 +455,7 @@ export const getStaffCount = async (req, res) => {
         WHERE t.name IS NOT NULL 
         AND t.name != ''
         AND t.${dateCol} IS NOT NULL
+        AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
       `;
     } else {
       query = `
@@ -461,6 +465,7 @@ export const getStaffCount = async (req, res) => {
         WHERE t.name IS NOT NULL 
         AND t.name != ''
         AND t.${dateCol} IS NOT NULL
+        AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
       `;
 
       if (userRole === "DIV_ADMIN" && unit && division) {

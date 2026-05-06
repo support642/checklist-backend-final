@@ -96,6 +96,44 @@ export const sendTaskAssignmentEmail = async (to, details) => {
 };
 
 /**
+ * Template for Maintenance Task Assignment Notification
+ */
+export const sendMaintenanceAssignmentEmail = async (to, details) => {
+  const { doerName, taskId, givenBy, description, dueDate, frequency, machineName, partName, partArea } = details;
+  
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #7c3aed; border-radius: 10px;">
+      <h2 style="color: #7c3aed;">🛠️ Maintenance Task Assigned</h2>
+      <p>Hello <strong>${doerName}</strong>,</p>
+      <p>A new maintenance task has been assigned to you by <strong>${givenBy}</strong>.</p>
+      
+      <div style="background-color: #f5f3ff; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #7c3aed;">
+        <p><strong>Machine Name:</strong> ${machineName || 'N/A'}</p>
+        <p><strong>Part Name:</strong> ${partName || 'N/A'}</p>
+        <p><strong>Part Area:</strong> ${partArea || 'N/A'}</p>
+        <hr style="border: 0; border-top: 1px solid #ddd; margin: 10px 0;">
+        <p><strong>Task ID:</strong> ${taskId}</p>
+        <p><strong>Description:</strong> ${description}</p>
+        <p><strong>Frequency:</strong> ${frequency}</p>
+        <p><strong>Due Date:</strong> ${formatDateTime(dueDate)}</p>
+      </div>
+      
+      <p>Please log in to the portal to view and update the machine maintenance details.</p>
+      <a href="https://checklist-frontend-nu.vercel.app" style="display: inline-block; background-color: #7c3aed; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 10px;">View Portal</a>
+      
+      <hr style="margin: 30px 0; border: 0; border-top: 1px solid #eee;" />
+      <p style="font-size: 12px; color: #6b7280;">This is an automated notification from Rama Udyog Maintenance System.</p>
+    </div>
+  `;
+
+  return sendEmail({
+    to,
+    subject: `🛠️ Maintenance: ${machineName || 'Task'} - ${description.substring(0, 20)}...`,
+    html,
+  });
+};
+
+/**
  * Template for Delegation Status Update (Admin Notification)
  */
 export const sendDelegationStatusUpdateEmail = async (adminEmails, task, status) => {

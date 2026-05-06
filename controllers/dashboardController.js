@@ -23,7 +23,36 @@ const getCurrentMonthRange = () => {
   return { firstDayStr, currentDayStr };
 };
 
+const getMapping = (dashboardType) => {
+  let table = dashboardType === 'maintenance' ? 'maintenance_tasks' : (dashboardType || 'checklist');
+  let idCol = 'task_id';
+  let remarkCol = 'remark';
+  let adminDoneCol = 'admin_done';
+  let adminDoneRemarksCol = 'admin_done_remarks';
+  let imageCol = 'image';
+  let dateCol = 'task_start_date';
+  let colorCodeCol = 'NULL as color_code_for';
+  let enableReminderCol = 'enable_reminder';
+
+  if (dashboardType === 'maintenance') {
+    idCol = 'id';
+    remarkCol = 'remarks';
+    adminDoneRemarksCol = 'admin_remark';
+    imageCol = 'uploaded_image_url';
+    enableReminderCol = 'enable_reminders';
+  } else if (dashboardType === 'delegation') {
+    remarkCol = 'remarks';
+    adminDoneCol = 'NULL';
+    adminDoneRemarksCol = 'adminremarks';
+    dateCol = 'planned_date';
+    colorCodeCol = 'color_code_for';
+  }
+
+  return { table, idCol, remarkCol, adminDoneCol, adminDoneRemarksCol, imageCol, dateCol, colorCodeCol, enableReminderCol };
+};
+
 export const getDashboardData = async (req, res) => {
+  let finalQuery = "";
   try {
     const {
       dashboardType,
@@ -40,45 +69,36 @@ export const getDashboardData = async (req, res) => {
       endDate
     } = req.query;
 
-    const table = dashboardType;
-    const offset = (page - 1) * limit;
-
-    // Get current month range
     const { firstDayStr, currentDayStr } = getCurrentMonthRange();
-
-    // Delegation and checklist tables have different column names:
-    // checklist: remark, admin_done, admin_done_remarks
-    // delegation: remarks, (no admin_done), adminremarks
-    const remarkCol = dashboardType === 'delegation' ? 'remarks' : 'remark';
-    const adminDoneCol = dashboardType === 'delegation' ? "NULL as admin_done" : 'admin_done';
-    const adminDoneRemarksCol = dashboardType === 'delegation' ? 'adminremarks as admin_done_remarks' : 'admin_done_remarks';
-    const colorCodeCol = dashboardType === 'delegation' ? 'color_code_for' : 'NULL as color_code_for';
+    const { table, idCol, remarkCol, adminDoneCol, adminDoneRemarksCol, imageCol, dateCol, colorCodeCol, enableReminderCol } = getMapping(dashboardType);
+    const offset = (page - 1) * limit;
 
     let query = `
       SELECT 
-        task_id,
+        ${idCol} as task_id,
         department,
         given_by,
         name,
         task_description,
-        enable_reminder,
+        ${enableReminderCol} as enable_reminder,
         require_attachment,
         frequency,
         ${remarkCol} as remark,
         status,
-        image,
-        ${adminDoneCol},
+        ${imageCol} as image,
+        ${adminDoneCol} as admin_done,
         delay,
         ${colorCodeCol},
         CASE WHEN planned_date IS NOT NULL THEN to_char(planned_date::timestamp, 'YYYY-MM-DD HH24:MI:SS') ELSE NULL END as planned_date,
         CASE WHEN created_at IS NOT NULL THEN to_char(created_at::timestamp, 'YYYY-MM-DD HH24:MI:SS') ELSE NULL END as created_at,
         CASE WHEN task_start_date IS NOT NULL THEN to_char(task_start_date::timestamp, 'YYYY-MM-DD HH24:MI:SS') ELSE NULL END as task_start_date,
         CASE WHEN submission_date IS NOT NULL THEN to_char(submission_date::timestamp, 'YYYY-MM-DD HH24:MI:SS') ELSE NULL END as submission_date,
-        ${adminDoneRemarksCol},
-        ${table}.task_start_date as task_start_date_original
+        ${adminDoneRemarksCol} as admin_done_remarks,
+        ${table}.${dateCol} as task_start_date_original
       FROM ${table} 
       WHERE 1=1
     `;
+    finalQuery = query;
 
     // Normalize role comparison
     const upRole = (role || "").toUpperCase();
@@ -120,7 +140,6 @@ export const getDashboardData = async (req, res) => {
     // TASK VIEW FILTERS
     // ---------------------------
     // Use planned_date for delegation, task_start_date for checklist
-    const dateCol = dashboardType === "delegation" ? `${table}.planned_date` : `${table}.task_start_date`;
 
     // Exclude Leave and Inactive (Day Off) tasks from main views
     query += ` AND (${table}.status IS NULL OR LOWER(${table}.status::text) NOT IN ('leave', 'inactive')) `;
@@ -204,7 +223,8 @@ export const getDashboardData = async (req, res) => {
     res.json(rows);
 
   } catch (err) {
-    console.error("ERROR in getDashboardData:", err);
+    console.error("ERROR in getDashboardData:", err.message);
+    if (finalQuery) console.error("QUERY WAS:", finalQuery);
     res.status(500).send("Error fetching dashboard data");
   }
 };
@@ -223,12 +243,8 @@ export const getTotalTask = async (req, res) => {
       endDate
     } = req.query;
 
-    const table = dashboardType;
-
-    // Get current month range
+    const { table, dateCol } = getMapping(dashboardType);
     const { firstDayStr, currentDayStr } = getCurrentMonthRange();
-
-    const dateCol = dashboardType === "delegation" ? "planned_date" : "task_start_date";
 
     let query = `
       SELECT COUNT(*) AS count
@@ -315,13 +331,8 @@ export const getCompletedTask = async (req, res) => {
       endDate
     } = req.query;
 
-    const table = dashboardType;
-
-    // Get current month range
+    const { table, dateCol } = getMapping(dashboardType);
     const { firstDayStr, currentDayStr } = getCurrentMonthRange();
-
-    // Use planned_date for delegation, task_start_date for checklist
-    const dateCol = dashboardType === "delegation" ? "planned_date" : "task_start_date";
 
     let query = `
       SELECT COUNT(*) AS count
@@ -429,14 +440,8 @@ export const getPendingTask = async (req, res) => {
       startDate,
       endDate
     } = req.query;
-    const table = dashboardType;
-
-    // Get current month range
+    const { table, dateCol } = getMapping(dashboardType);
     const { firstDayStr, currentDayStr } = getCurrentMonthRange();
-
-    // Align with "recent" list logic: only today's tasks that are not submitted
-    // Use planned_date for delegation, task_start_date for checklist
-    const dateCol = dashboardType === "delegation" ? "planned_date" : "task_start_date";
 
     let query = `
       SELECT COUNT(*) AS count
@@ -509,13 +514,8 @@ export const getNotDoneTask = async (req, res) => {
       startDate,
       endDate
     } = req.query;
-    const table = dashboardType;
-
-    // Get current month range
+    const { table, dateCol } = getMapping(dashboardType);
     const { firstDayStr, currentDayStr } = getCurrentMonthRange();
-
-    // Use planned_date for delegation, task_start_date for checklist
-    const dateCol = dashboardType === "delegation" ? "planned_date" : "task_start_date";
 
     let query = `
       SELECT COUNT(*) AS count
@@ -587,13 +587,8 @@ export const getOverdueTask = async (req, res) => {
       endDate
     } = req.query;
 
-    const table = dashboardType;
+    const { table, dateCol } = getMapping(dashboardType);
     const params = [];
-    let idx = 1;
-
-    // Align with task list overdue view: before today and not submitted
-    // Use planned_date for delegation, task_start_date for checklist
-    const dateCol = dashboardType === "delegation" ? "planned_date" : "task_start_date";
 
     let query = "";
     if (startDate && endDate) {
@@ -905,9 +900,7 @@ export const getStaffTaskSummary = async (req, res) => {
       startDate,
       endDate
     } = req.query;
-    const table = dashboardType;
-
-    // Get current month range
+    const { table } = getMapping(dashboardType);
     const { firstDayStr, currentDayStr } = getCurrentMonthRange();
 
     const query = `
@@ -918,7 +911,7 @@ export const getStaffTaskSummary = async (req, res) => {
         SUM(
           CASE 
             WHEN t.submission_date IS NOT NULL THEN 1
-            WHEN t.status = 'Yes' THEN 1
+            WHEN LOWER(t.status::text) = 'yes' THEN 1
             ELSE 0 
           END
         ) AS completed
@@ -1010,10 +1003,12 @@ export const getDashboardDataCount = async (req, res) => {
       endDate
     } = req.query;
 
+    const { table, dateCol } = getMapping(dashboardType);
+
     // Base query (no month cap) so it matches list view filters exactly
     let query = `
       SELECT COUNT(*) AS count
-      FROM ${dashboardType}
+      FROM ${table}
       WHERE (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive'))
     `;
 
@@ -1023,29 +1018,26 @@ export const getDashboardDataCount = async (req, res) => {
     const requesterDepartment = req.query.department;
 
     if (upRole === "SUPER_ADMIN" || upRole === "super_admin") {
-      if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter}')`;
-      if (departmentFilter && departmentFilter !== "all") query += ` AND LOWER(department)=LOWER('${departmentFilter}')`;
-      if (unitFilter && unitFilter !== "all") query += ` AND LOWER(unit)=LOWER('${unitFilter}')`;
-      if (divisionFilter && divisionFilter !== "all") query += ` AND LOWER(division)=LOWER('${divisionFilter}')`;
+      if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter.replace(/'/g, "''")}')`;
+      if (departmentFilter && departmentFilter !== "all") query += ` AND LOWER(department)=LOWER('${departmentFilter.replace(/'/g, "''")}')`;
+      if (unitFilter && unitFilter !== "all") query += ` AND LOWER(unit)=LOWER('${unitFilter.replace(/'/g, "''")}')`;
+      if (divisionFilter && divisionFilter !== "all") query += ` AND LOWER(division)=LOWER('${divisionFilter.replace(/'/g, "''")}')`;
     } else if (upRole === "DIV_ADMIN" || upRole === "div_admin") {
-      query += ` AND LOWER(unit)=LOWER('${requesterUnit}') AND LOWER(division)=LOWER('${requesterDivision}')`;
-      if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter}')`;
-      if (departmentFilter && departmentFilter !== "all") query += ` AND LOWER(department)=LOWER('${departmentFilter}')`;
+      query += ` AND LOWER(unit)=LOWER('${requesterUnit?.replace(/'/g, "''")}') AND LOWER(division)=LOWER('${requesterDivision?.replace(/'/g, "''")}')`;
+      if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter.replace(/'/g, "''")}')`;
+      if (departmentFilter && departmentFilter !== "all") query += ` AND LOWER(department)=LOWER('${departmentFilter.replace(/'/g, "''")}')`;
     } else if (upRole === "ADMIN" || upRole === "admin") {
       if (requesterDepartment && requesterDepartment.includes(',')) {
         const depts = requesterDepartment.split(',').map(d => d.trim().toLowerCase());
         const deptList = depts.map(d => `'${d.replace(/'/g, "''")}'`).join(',');
-        query += ` AND LOWER(unit)=LOWER('${requesterUnit}') AND LOWER(division)=LOWER('${requesterDivision}') AND LOWER(department) IN (${deptList})`;
+        query += ` AND LOWER(unit)=LOWER('${requesterUnit?.replace(/'/g, "''")}') AND LOWER(division)=LOWER('${requesterDivision?.replace(/'/g, "''")}') AND LOWER(department) IN (${deptList})`;
       } else {
-        query += ` AND LOWER(unit)=LOWER('${requesterUnit}') AND LOWER(division)=LOWER('${requesterDivision}') AND LOWER(department)=LOWER('${requesterDepartment}')`;
+        query += ` AND LOWER(unit)=LOWER('${requesterUnit?.replace(/'/g, "''")}') AND LOWER(division)=LOWER('${requesterDivision?.replace(/'/g, "''")}') AND LOWER(department)=LOWER('${requesterDepartment?.replace(/'/g, "''")}')`;
       }
       if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter.replace(/'/g, "''")}')`;
     } else {
-      query += ` AND LOWER(name)=LOWER('${username}')`;
+      query += ` AND LOWER(name)=LOWER('${username?.replace(/'/g, "''")}')`;
     }
-
-    // Use planned_date for delegation, task_start_date for checklist
-    const dateCol = dashboardType === "delegation" ? "planned_date" : "task_start_date";
 
     // TASK VIEW LOGIC
     if (taskView === "recent") {
@@ -1073,10 +1065,6 @@ export const getDashboardDataCount = async (req, res) => {
           AND DATE(${dateCol}) < CURRENT_DATE
           AND submission_date IS NULL
         `;
-      }
-
-      if (dashboardType === "checklist") {
-        query += ` AND submission_date IS NULL`;
       }
     }
 
@@ -1128,6 +1116,7 @@ export const getChecklistDateRangeCount = async (req, res) => {
       FROM checklist
       WHERE task_start_date::date >= $1::date
       AND task_start_date::date <= $2::date
+      AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive'))
     `;
 
     // ROLE FILTER (USER)
@@ -1162,14 +1151,14 @@ export const getChecklistDateRangeCount = async (req, res) => {
         query += ` AND LOWER(status::text) = 'yes'`;
         break;
       case "pending":
-        query += ` AND (status IS NULL OR LOWER(status::text) <> 'yes') AND LOWER(status::text) <> 'leave'`;
+        query += ` AND (status IS NULL OR LOWER(status::text) <> 'yes') AND LOWER(status::text) NOT IN ('leave', 'inactive')`;
         break;
       case "overdue":
         query += ` 
           AND (status IS NULL OR LOWER(status::text) <> 'yes')
           AND submission_date IS NULL
           AND task_start_date < CURRENT_DATE
-          AND LOWER(status::text) <> 'leave'
+          AND LOWER(status::text) NOT IN ('leave', 'inactive')
         `;
         break;
     }

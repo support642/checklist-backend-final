@@ -1,6 +1,6 @@
 import pool from "../config/db.js";
 import { uploadToS3 } from "../middleware/s3Upload.js";
-import { sendTaskAssignmentEmail } from "../services/emailService.js";
+import { sendTaskAssignmentEmail, sendMaintenanceAssignmentEmail } from "../services/emailService.js";
 import whatsappService from "../services/whatsappService.js";
 
 // 0️⃣ User Profile (for AssignTaskUser pre-fill)
@@ -196,9 +196,9 @@ export const postAssignTasks = async (req, res) => {
 
       // Resolve machine_parts data if machinePartId is provided
       const machinePartId = tasks[0].machinePartId || null;
-      let resolvedMachineName = tasks[0].machineName || null;
-      let resolvedPartName = tasks[0].partName || null;
-      let resolvedPartArea = tasks[0].partArea || null;
+      var resolvedMachineName = tasks[0].machineName || null;
+      var resolvedPartName = tasks[0].partName || null;
+      var resolvedPartArea = tasks[0].partArea || null;
 
       if (machinePartId) {
         const mpResult = await pool.query(
@@ -359,7 +359,7 @@ export const postAssignTasks = async (req, res) => {
       var insertedTaskId = result.rows.length > 0 ? result.rows[0].task_id : null;
     }
 
-    // 📩 Email Notification for new Task Assignment
+    // 📩 Email & WhatsApp Notification for new Task Assignment
     try {
       const doerName = tasks[0].doer;
       const userResult = await pool.query(
@@ -370,27 +370,53 @@ export const postAssignTasks = async (req, res) => {
       if (userResult.rows.length > 0) {
         const email = userResult.rows[0].email_id;
         const phone = userResult.rows[0].number;
+        
         const taskDetails = {
           doerName: tasks[0].doer,
           taskId: insertedTaskId || "N/A",
           givenBy: tasks[0].givenBy,
           description: tasks[0].description,
           dueDate: tasks[0].taskStartDate || tasks[0].startDate || tasks[0].dueDate,
-          frequency: tasks[0].frequency
+          frequency: tasks[0].frequency,
+          // For Maintenance
+          machineName: tasks[0].machineName,
+          partName: Array.isArray(tasks[0].partName) ? tasks[0].partName.join(', ') : tasks[0].partName,
+          partArea: tasks[0].partArea
         };
 
+        // If it's maintenance but missing details from body, they might have been resolved in the maintenance block
+        if (taskType === "maintenance") {
+           // These variables were defined as 'var' or 'let' in the maintenance block
+           // If they exist in scope, use them
+           if (!taskDetails.machineName && typeof resolvedMachineName !== 'undefined') taskDetails.machineName = resolvedMachineName;
+           if (!taskDetails.partArea && typeof resolvedPartArea !== 'undefined') taskDetails.partArea = resolvedPartArea;
+           if (!taskDetails.partName && typeof resolvedPartName !== 'undefined') {
+              taskDetails.partName = Array.isArray(resolvedPartName) ? resolvedPartName.join(', ') : resolvedPartName;
+           }
+        }
+
         if (email) {
-          console.log(`📧 Sending assignment email to: ${email} for task: ${tasks[0].description}`);
-          await sendTaskAssignmentEmail(email, taskDetails);
+          if (taskType === "maintenance") {
+            console.log(`📧 Sending maintenance assignment email to: ${email}`);
+            await sendMaintenanceAssignmentEmail(email, taskDetails);
+          } else {
+            console.log(`📧 Sending assignment email to: ${email}`);
+            await sendTaskAssignmentEmail(email, taskDetails);
+          }
         }
 
         if (phone) {
-          console.log(`📱 Sending assignment WhatsApp to: ${phone} for task: ${tasks[0].description}`);
-          await whatsappService.sendTaskAssignmentNotification(phone, taskDetails);
+          if (taskType === "maintenance") {
+            console.log(`📱 Sending maintenance WhatsApp to: ${phone}`);
+            await whatsappService.sendMaintenanceAssignmentNotification(phone, taskDetails);
+          } else {
+            console.log(`📱 Sending assignment WhatsApp to: ${phone}`);
+            await whatsappService.sendTaskAssignmentNotification(phone, taskDetails);
+          }
         }
       }
     } catch (notifErr) {
-      console.error("❌ Email assignment notification error:", notifErr);
+      console.error("❌ Notification error:", notifErr);
     }
 
     console.log(`ℹ️ Task created successfully for ${tasks[0].doer} (Email notification process complete)`);

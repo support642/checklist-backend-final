@@ -11,7 +11,8 @@ import {
     getMaintenanceUniqueCount,
     sendMaintenanceNotification,
     bulkDeleteMaintenance,
-    bulkLeaveMaintenance
+    bulkLeaveMaintenance,
+    approveActivationMaintenance
 } from "../controllers/maintenanceController.js";
 const router = express.Router();
 
@@ -46,5 +47,6 @@ router.post("/unique-count", getMaintenanceUniqueCount);
 router.post("/send-notification", sendMaintenanceNotification);
 router.post("/bulk-delete", bulkDeleteMaintenance);
 router.post("/bulk-leave", bulkLeaveMaintenance);
+router.post("/approve-activation", approveActivationMaintenance);
 
 export default router;

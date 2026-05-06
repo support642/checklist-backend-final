@@ -21,20 +21,20 @@ const IS_WHATSAPP_DISCONNECTED = true;
  */
 const formatPhoneNumber = (phoneNumber) => {
   if (!phoneNumber) return null;
-  
+
   // Convert to string and remove any spaces, dashes, or parentheses
   let phone = String(phoneNumber).replace(/[\s\-\(\)]/g, '');
-  
+
   // If number starts with 0, replace with 91 (India)
   if (phone.startsWith('0')) {
     phone = '91' + phone.substring(1);
   }
-  
+
   // If number doesn't have country code (less than 12 digits), add 91
   if (phone.length === 10) {
     phone = '91' + phone;
   }
-  
+
   return phone;
 };
 
@@ -44,18 +44,18 @@ const formatPhoneNumber = (phoneNumber) => {
  */
 const formatDate = (dateStr) => {
   if (!dateStr) return 'N/A';
-  
+
   try {
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return dateStr;
-    
+
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
-    
+
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   } catch (e) {
     return dateStr;
@@ -84,7 +84,7 @@ export const sendWhatsAppMessage = async (phoneNumber, message) => {
 
     // Format phone number
     const formattedPhone = formatPhoneNumber(phoneNumber);
-    
+
     if (!formattedPhone) {
       console.error('❌ Invalid phone number provided');
       return { success: false, error: 'Invalid phone number' };
@@ -92,22 +92,22 @@ export const sendWhatsAppMessage = async (phoneNumber, message) => {
 
     console.log(`📱 Sending WhatsApp to: ${formattedPhone}`);
 
-   const response = await axios.post(
-  `${MAYTAPI_BASE_URL}/${PRODUCT_ID}/${PHONE_ID}/sendMessage`,
-  {
-    to_number: formattedPhone,
-    type: "text",
-    message: message,
-    preview_url: true      // 👈 THIS MAKES LINKS CLICKABLE
-  },
-  {
-    headers: {
-      "x-maytapi-key": API_TOKEN,
-      "Content-Type": "application/json"
-    },
-    timeout: 10000
-  }
-);
+    const response = await axios.post(
+      `${MAYTAPI_BASE_URL}/${PRODUCT_ID}/${PHONE_ID}/sendMessage`,
+      {
+        to_number: formattedPhone,
+        type: "text",
+        message: message,
+        preview_url: true      // 👈 THIS MAKES LINKS CLICKABLE
+      },
+      {
+        headers: {
+          "x-maytapi-key": API_TOKEN,
+          "Content-Type": "application/json"
+        },
+        timeout: 10000
+      }
+    );
 
 
     console.log('✅ WhatsApp message sent successfully');
@@ -126,16 +126,16 @@ export const sendWhatsAppMessage = async (phoneNumber, message) => {
  */
 export const sendTaskAssignmentNotification = async (phoneNumber, taskDetails) => {
   const { doerName, taskId, givenBy, description, dueDate, frequency } = taskDetails;
-  
+
   // Determine header based on frequency
   const isOneTime = frequency && frequency.toLowerCase() === 'onetime';
-  const header = isOneTime 
-    ? '🔔 REMINDER: DELEGATION TASK*' 
+  const header = isOneTime
+    ? '🔔 REMINDER: DELEGATION TASK*'
     : '🔔 REMINDER: CHECKLIST TASK*';
-  
+
   // App link for task completion
   const appLink = 'https://checklist-frontend-nu.vercel.app';
-  
+
   const message = `${header}
 
 Dear ${doerName || 'Team Member'},
@@ -159,18 +159,52 @@ Rama Udyog Group.`;
 };
 
 /**
+ * Send maintenance assignment notification via WhatsApp
+ */
+export const sendMaintenanceAssignmentNotification = async (phoneNumber, taskDetails) => {
+  const { doerName, taskId, givenBy, description, dueDate, machineName, partName, partArea } = taskDetails;
+
+  const appLink = 'https://checklist-frontend-nu.vercel.app';
+
+  const message = `🛠️ *MAINTENANCE TASK ASSIGNED*
+
+Dear ${doerName || 'Team Member'},
+
+A new maintenance task has been assigned to you.
+
+⚙️ *Machine:* ${machineName || 'N/A'}
+🔧 *Part:* ${partName || 'N/A'}
+📍 *Area:* ${partArea || 'N/A'}
+
+📌 *Task ID:* ${taskId || 'N/A'}
+🧑‍💼 *Allocated By:* ${givenBy || 'N/A'}
+📝 *Task Description:* ${description || 'N/A'}
+⏳ *Deadline:* ${formatDate(dueDate)}
+
+Closure Link:
+${appLink}
+
+Please ensure the machine is serviced properly.
+
+Best regards,
+Rama Udyog Group.`;
+
+  return await sendWhatsAppMessage(phoneNumber, message);
+};
+
+/**
  * Send delegation task status update notification to specific admin number
  * @param {object} taskDetails - Details of the task being updated
  * @param {string} updateType - Type of update ('done', 'partial_done', 'extend')
  */
 export const sendDelegationStatusUpdateNotification = async (taskDetails, updateType) => {
   const { name, task_id, task_description, next_extend_date, reason } = taskDetails;
-  
-  const adminNumber = '9637655555';
-  
+
+  const adminNumber = '8827194777';
+
   console.log(`[WhatsApp] Update Type: ${updateType}, Task ID: ${task_id}, Admin Number: ${adminNumber}`);
   console.log(`[WhatsApp] Name: ${name}, Next Extend Date: ${next_extend_date}`);
-  
+
   let statusHeader = '📋 *DELEGATION TASK UPDATE*';
   let statusText = 'Updated';
 
@@ -186,7 +220,7 @@ export const sendDelegationStatusUpdateNotification = async (taskDetails, update
   }
 
   const appLink = 'https://checklist-frontend-nu.vercel.app';
-  
+
   const message = `${statusHeader}
 
 Name: ${name || 'N/A'}
@@ -204,9 +238,10 @@ ${appLink}`;
   return result;
 };
 
-export default { 
-  sendWhatsAppMessage, 
-  sendTaskAssignmentNotification, 
-  sendDelegationStatusUpdateNotification 
+export default {
+  sendWhatsAppMessage,
+  sendTaskAssignmentNotification,
+  sendMaintenanceAssignmentNotification,
+  sendDelegationStatusUpdateNotification
 };
 

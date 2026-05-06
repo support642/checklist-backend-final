@@ -37,6 +37,8 @@ export const getPendingChecklist = async (req, res) => {
       where += ` AND LOWER(status::text) = 'leave' `;
     } else if (status === "inactive") {
       where += ` AND LOWER(status::text) = 'inactive' `;
+    } else if (status === "activation_pending") {
+      where += ` AND LOWER(status::text) = 'activation_pending' `;
     } else {
       // Default 'all' view: exclude leave and inactive tasks
       where += ` AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive')) `;
@@ -136,7 +138,8 @@ export const getPendingChecklist = async (req, res) => {
           WHEN DATE(task_start_date) = CURRENT_DATE THEN 1
           ELSE 2 
         END,
-        task_start_date ASC
+        task_start_date ASC,
+        task_id ASC
       LIMIT $1 OFFSET $2
     `;
 
@@ -659,28 +662,73 @@ export const getChecklistMetadata = async (req, res) => {
 export const bulkDeleteChecklist = async (req, res) => {
   const client = await pool.connect();
   try {
+    const { taskIds, role } = req.body;
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+      return res.status(400).json({ error: "No task IDs provided" });
+    }
+
+    const upRole = (role || "").toUpperCase();
+    const isAdmin = ["SUPER_ADMIN", "ADMIN", "DIV_ADMIN"].includes(upRole);
+
+    await client.query("BEGIN");
+
+    // Toggle status logic:
+    // 1. If currently 'Inactive' or 'Activation_Pending':
+    //    - If Admin: Set to NULL (Approved/Active)
+    //    - If User: Set to 'Activation_Pending' (Requesting Day On)
+    // 2. If currently NULL (or anything else):
+    //    - Set to 'Inactive' (Day Off)
+    
+    const query = `
+      UPDATE checklist 
+      SET status = CASE 
+        WHEN status = 'Inactive' OR status = 'Activation_Pending' THEN 
+          CASE WHEN $2 = true THEN NULL ELSE 'Activation_Pending'::enable_reminder END
+        ELSE 'Inactive'::enable_reminder 
+      END
+      WHERE task_id = ANY($1)
+    `;
+    const { rowCount } = await client.query(query, [taskIds, isAdmin]);
+    await client.query("COMMIT");
+
+    const message = isAdmin 
+      ? `Successfully updated ${rowCount} tasks.` 
+      : `Requested activation for tasks. Status set to Pending Activation.`;
+
+    res.json({ message, updatedCount: rowCount });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("❌ Error in bulkDeleteChecklist:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  } finally {
+    client.release();
+  }
+};
+
+// -----------------------------------------
+// 7.1️⃣ APPROVE ACTIVATION CHECKLIST (Admin Only)
+// -----------------------------------------
+export const approveActivationChecklist = async (req, res) => {
+  const client = await pool.connect();
+  try {
     const { taskIds } = req.body;
     if (!Array.isArray(taskIds) || taskIds.length === 0) {
       return res.status(400).json({ error: "No task IDs provided" });
     }
 
     await client.query("BEGIN");
-    // Toggle status: If 'Inactive' set to NULL (Pending), else set to 'Inactive'
     const query = `
       UPDATE checklist 
-      SET status = CASE 
-        WHEN status = 'Inactive' THEN NULL 
-        ELSE 'Inactive'::enable_reminder 
-      END
-      WHERE task_id = ANY($1)
+      SET status = NULL
+      WHERE task_id = ANY($1) AND status = 'Activation_Pending'
     `;
     const { rowCount } = await client.query(query, [taskIds]);
     await client.query("COMMIT");
 
-    res.json({ message: `Successfully toggled ${rowCount} tasks for Day Off`, updatedCount: rowCount });
+    res.json({ message: `Successfully approved activation for ${rowCount} tasks`, updatedCount: rowCount });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("❌ Error in bulkDeleteChecklist:", error);
+    console.error("❌ Error in approveActivationChecklist:", error);
     res.status(500).json({ error: "Internal Server Error" });
   } finally {
     client.release();
