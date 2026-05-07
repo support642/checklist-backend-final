@@ -23,7 +23,7 @@ const transferTasks = async (req, res) => {
     // 1. Fetch tasks in the date range from the appropriate table
     const tableName = category === 'Maintenance' ? 'maintenance_tasks' : 'checklist';
     const fetchQuery = `
-      SELECT * FROM ${tableName}
+      SELECT *, division, unit FROM ${tableName}
       WHERE name = $1
       AND task_start_date >= $2
       AND task_start_date <= $3
@@ -57,9 +57,9 @@ const transferTasks = async (req, res) => {
         const insertQuery = `
           INSERT INTO delegation (
             task_id, task_description, given_by, name, 
-            created_at, status, department, frequency,
+            created_at, status, department, division, unit, frequency,
             task_start_date, planned_date
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `;
         return client.query(insertQuery, [
           task.task_id,
@@ -69,6 +69,8 @@ const transferTasks = async (req, res) => {
           task.task_start_date, // Use task start date as created_at
           'pending',
           task.department || '',
+          task.division || '',
+          task.unit || '',
           task.frequency || '',
           task.task_start_date,
           task.planned_date
@@ -127,10 +129,10 @@ const getUserTasks = async (req, res) => {
     // Fetch tasks in the date range
     const isMaintenance = category === 'Maintenance';
     const tableName = isMaintenance ? 'maintenance_tasks' : 'checklist';
-    
+
     // maintenance_tasks uses 'id' instead of 'task_id' and 'machine_department'/'department'
     const idColumn = isMaintenance ? 'id as task_id' : 'task_id';
-    
+
     const fetchQuery = `
       SELECT 
         ${idColumn}, 
@@ -138,6 +140,8 @@ const getUserTasks = async (req, res) => {
         task_description, 
         task_start_date, 
         department, 
+        division,
+        unit,
         given_by, 
         frequency,
         planned_date
@@ -203,9 +207,9 @@ const assignIndividualTasks = async (req, res) => {
           const insertQuery = `
             INSERT INTO delegation (
               task_id, task_description, given_by, name, 
-              created_at, status, department, frequency,
+              created_at, status, department, division, unit, frequency,
               task_start_date, planned_date
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           `;
           return client.query(insertQuery, [
             task.task_id,
@@ -215,6 +219,8 @@ const assignIndividualTasks = async (req, res) => {
             task.task_start_date,
             'pending',
             task.department || '',
+            task.division || '',
+            task.unit || '',
             task.frequency || '',
             task.task_start_date,
             task.planned_date
@@ -227,13 +233,13 @@ const assignIndividualTasks = async (req, res) => {
     // Delete tasks that were NOT assigned (if any) or handle deletions for Checklist
     // For Checklist, we delete all handled tasks from the source table
     const table = category === 'Maintenance' ? 'maintenance_tasks' : 'checklist';
-    
+
     if (category === 'Maintenance') {
       // Only delete tasks that were completely unassigned (if that's the desired flow)
       const unassignedTaskIds = assignments
         .filter(task => !task.delegateTo || task.delegateTo.trim() === '')
         .map(t => t.task_id);
-      
+
       if (unassignedTaskIds.length > 0) {
         const deleteQuery = `DELETE FROM maintenance_tasks WHERE id = ANY($1)`;
         await client.query(deleteQuery, [unassignedTaskIds]);
@@ -353,7 +359,7 @@ const deleteTask = async (req, res) => {
     const isMaintenance = category === 'Maintenance';
     const table = isMaintenance ? 'maintenance_tasks' : 'checklist';
     const idColumn = isMaintenance ? 'id' : 'task_id';
-    
+
     const deleteQuery = `
       DELETE FROM ${table}
       WHERE ${idColumn} = $1
@@ -411,7 +417,7 @@ const bulkDeleteTasks = async (req, res) => {
     const isMaintenance = category === 'Maintenance';
     const table = isMaintenance ? 'maintenance_tasks' : 'checklist';
     const idColumn = isMaintenance ? 'id' : 'task_id';
-    
+
     const deleteQuery = `
       DELETE FROM ${table}
       WHERE ${idColumn} = ANY($1)

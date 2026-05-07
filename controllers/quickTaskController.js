@@ -9,7 +9,8 @@ export const fetchChecklist = async (
   userRole = "",
   userDept = "",
   userDiv = "",
-  userName = ""
+  userName = "",
+  search = ""
 ) => {
   try {
     const offset = page * pageSize;
@@ -39,6 +40,23 @@ export const fetchChecklist = async (
     } else if (role === 'user' && userName) {
       whereClause += ` AND LOWER(name) = LOWER($${paramIndex++})`;
       params.push(userName);
+    }
+    
+    // ⭐ Database-level search filter
+    if (search && search.trim()) {
+      const searchVal = `%${search.toLowerCase()}%`;
+      whereClause += ` AND (
+        LOWER(name) LIKE $${paramIndex} OR
+        LOWER(task_description) LIKE $${paramIndex} OR
+        LOWER(department) LIKE $${paramIndex} OR
+        LOWER(given_by) LIKE $${paramIndex} OR
+        LOWER(unit) LIKE $${paramIndex} OR
+        LOWER(division) LIKE $${paramIndex} OR
+        LOWER(frequency) LIKE $${paramIndex} OR
+        CAST(task_id AS TEXT) LIKE $${paramIndex}
+      )`;
+      params.push(searchVal);
+      paramIndex++;
     }
 
     // ⭐ DISTINCT ON ensures uniqueness based on (name + task_description)
@@ -93,7 +111,8 @@ export const fetchDelegation = async (
   userRole = "",
   userDept = "",
   userDiv = "",
-  userName = ""
+  userName = "",
+  search = ""
 ) => {
   try {
     const offset = page * pageSize;
@@ -135,6 +154,23 @@ export const fetchDelegation = async (
     } else if (role === 'user' && userName) {
       filters.push(`LOWER(name) = LOWER($${paramIndex++})`);
       params.push(userName);
+    }
+    
+    // ⭐ Database-level search filter
+    if (search && search.trim()) {
+      const searchVal = `%${search.toLowerCase()}%`;
+      filters.push(`(
+        LOWER(name) LIKE $${paramIndex} OR
+        LOWER(task_description) LIKE $${paramIndex} OR
+        LOWER(department) LIKE $${paramIndex} OR
+        LOWER(given_by) LIKE $${paramIndex} OR
+        LOWER(unit) LIKE $${paramIndex} OR
+        LOWER(division) LIKE $${paramIndex} OR
+        LOWER(frequency) LIKE $${paramIndex} OR
+        CAST(task_id AS TEXT) LIKE $${paramIndex}
+      )`);
+      params.push(searchVal);
+      paramIndex++;
     }
 
     const whereClause = filters.join(" AND ");

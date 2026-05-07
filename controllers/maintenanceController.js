@@ -101,7 +101,6 @@ export const getPendingMaintenanceTasks = async (req, res) => {
             queryParams.push(username);
         }
 
-        // ⭐ Add search filter if search term is provided
         if (search.trim()) {
             const searchParamIndex = queryParams.length + 1;
             where += ` AND (
@@ -109,8 +108,15 @@ export const getPendingMaintenanceTasks = async (req, res) => {
                 LOWER(t.task_description) LIKE $${searchParamIndex} OR
                 LOWER(t.department) LIKE $${searchParamIndex} OR
                 LOWER(t.given_by) LIKE $${searchParamIndex} OR
+                LOWER(t.unit) LIKE $${searchParamIndex} OR
+                LOWER(t.division) LIKE $${searchParamIndex} OR
+                LOWER(t.frequency) LIKE $${searchParamIndex} OR
+                LOWER(COALESCE(t.remarks, '')) LIKE $${searchParamIndex} OR
+                LOWER(COALESCE(t.admin_remark, '')) LIKE $${searchParamIndex} OR
+                LOWER(COALESCE(t.status::text, '')) LIKE $${searchParamIndex} OR
                 LOWER(COALESCE(mp.machine_name, t.machine_name)) LIKE $${searchParamIndex} OR
                 LOWER(COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', '))) LIKE $${searchParamIndex} OR
+                LOWER(COALESCE(mp.machine_area, t.part_area)) LIKE $${searchParamIndex} OR
                 CAST(t.id AS TEXT) LIKE $${searchParamIndex}
             ) `;
             queryParams.push(`%${search.toLowerCase()}%`);
@@ -253,15 +259,21 @@ export const getMaintenanceHistory = async (req, res) => {
                 LOWER(t.task_description) LIKE ? OR 
                 LOWER(t.department) LIKE ? OR 
                 LOWER(t.given_by) LIKE ? OR
+                LOWER(t.unit) LIKE ? OR 
+                LOWER(t.division) LIKE ? OR
+                LOWER(t.frequency) LIKE ? OR
+                LOWER(COALESCE(t.remarks, '')) LIKE ? OR
+                LOWER(COALESCE(t.admin_remark, '')) LIKE ? OR
+                LOWER(COALESCE(t.status::text, '')) LIKE ? OR
                 LOWER(COALESCE(mp.machine_name, t.machine_name)) LIKE ? OR
                 LOWER(COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', '))) LIKE ? OR
-                CAST(t.id AS TEXT) LIKE ? OR
-                LOWER(t.unit) LIKE ? OR
-                LOWER(t.division) LIKE ?
+                LOWER(COALESCE(mp.machine_area, t.part_area)) LIKE ? OR
+                CAST(t.id AS TEXT) LIKE ?
             )`;
             whereConditions.push(searchCondition.replace(/\?/g, () => `$${paramIndex++}`));
             countWhereConditions.push(searchCondition.replace(/\?/g, () => `$${countParamIndex++}`));
-            for (let i = 0; i < 9; i++) {
+            // Push the same value for all 14 placeholders in the search condition
+            for (let i = 0; i < 14; i++) {
                 params.push(searchVal);
                 countParams.push(searchVal);
             }
@@ -530,6 +542,7 @@ export const getUniqueMaintenanceTasks = async (req, res) => {
         const userDept = req.body.userDept || "";
         const userDiv = req.body.userDiv || "";
         const userName = req.body.userName || "";
+        const search = req.body.search || "";
 
         const offset = page * pageSize;
         const params = [];
@@ -558,6 +571,26 @@ export const getUniqueMaintenanceTasks = async (req, res) => {
         } else if (upRole === "USER" && userName) {
             whereClause += ` AND LOWER(t.name) = LOWER($${paramIndex++})`;
             params.push(userName);
+        }
+
+        // ⭐ Database-level search filter
+        if (search && search.trim()) {
+            const searchVal = `%${search.toLowerCase()}%`;
+            whereClause += ` AND (
+                LOWER(t.name) LIKE $${paramIndex} OR
+                LOWER(t.task_description) LIKE $${paramIndex} OR
+                LOWER(t.department) LIKE $${paramIndex} OR
+                LOWER(t.given_by) LIKE $${paramIndex} OR
+                LOWER(t.unit) LIKE $${paramIndex} OR
+                LOWER(t.division) LIKE $${paramIndex} OR
+                LOWER(t.frequency) LIKE $${paramIndex} OR
+                LOWER(COALESCE(mp.machine_name, t.machine_name)) LIKE $${paramIndex} OR
+                LOWER(COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', '))) LIKE $${paramIndex} OR
+                LOWER(COALESCE(mp.machine_area, t.part_area)) LIKE $${paramIndex} OR
+                CAST(t.id AS TEXT) LIKE $${paramIndex}
+            )`;
+            params.push(searchVal);
+            paramIndex++;
         }
 
         const dataQuery = `

@@ -20,7 +20,8 @@ router.post("/checklist", async (req, res) => {
     req.body.userRole,
     req.body.userDept,
     req.body.userDiv,
-    req.body.userName
+    req.body.userName,
+    req.body.search
   );
   res.json(result);
 });
@@ -36,7 +37,8 @@ router.post("/delegation", async (req, res) => {
     req.body.userRole,
     req.body.userDept,
     req.body.userDiv,
-    req.body.userName
+    req.body.userName,
+    req.body.search
   );
   res.json(result);
 });

@@ -94,7 +94,6 @@ export const getPendingChecklist = async (req, res) => {
       queryParams.push(username);
     }
 
-    // ⭐ Search filter
     if (search.trim()) {
       const searchParamIndex = queryParams.length + 1;
       where += ` AND (
@@ -102,6 +101,12 @@ export const getPendingChecklist = async (req, res) => {
         LOWER(task_description) LIKE $${searchParamIndex} OR
         LOWER(department) LIKE $${searchParamIndex} OR
         LOWER(given_by) LIKE $${searchParamIndex} OR
+        LOWER(unit) LIKE $${searchParamIndex} OR
+        LOWER(division) LIKE $${searchParamIndex} OR
+        LOWER(frequency) LIKE $${searchParamIndex} OR
+        LOWER(COALESCE(remark, '')) LIKE $${searchParamIndex} OR
+        LOWER(COALESCE(admin_done_remarks, '')) LIKE $${searchParamIndex} OR
+        LOWER(COALESCE(status::text, '')) LIKE $${searchParamIndex} OR
         CAST(task_id AS TEXT) LIKE $${searchParamIndex}
       ) `;
       queryParams.push(`%${search.toLowerCase()}%`);
@@ -284,14 +289,18 @@ export const getChecklistHistory = async (req, res) => {
         LOWER(task_description) LIKE ? OR 
         LOWER(department) LIKE ? OR 
         LOWER(given_by) LIKE ? OR
-        CAST(task_id AS TEXT) LIKE ? OR
         LOWER(unit) LIKE ? OR
-        LOWER(division) LIKE ?
+        LOWER(division) LIKE ? OR
+        LOWER(frequency) LIKE ? OR
+        LOWER(COALESCE(remark, '')) LIKE ? OR
+        LOWER(COALESCE(admin_done_remarks, '')) LIKE ? OR
+        LOWER(COALESCE(status::text, '')) LIKE ? OR
+        CAST(task_id AS TEXT) LIKE ?
       )`;
       whereConditions.push(searchCondition.replace(/\?/g, () => `$${paramIndex++}`));
       countWhereConditions.push(searchCondition.replace(/\?/g, () => `$${countParamIndex++}`));
-      // Push the same value for all 7 placeholders in the search condition
-      for (let i = 0; i < 7; i++) {
+      // Push the same value for all 11 placeholders in the search condition
+      for (let i = 0; i < 11; i++) {
         params.push(searchVal);
         countParams.push(searchVal);
       }
