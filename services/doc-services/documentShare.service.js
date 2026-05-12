@@ -1,7 +1,7 @@
 import axios from "axios";
 
 /**
- * Send a WhatsApp message with document details via Maytapi
+ * Send a WhatsApp message with document details via WhatsApp Cloud API
  * @param {string} phone - Recipient phone number (with country code)
  * @param {string} documentName - Name of the document
  * @param {string} documentUrl - URL of the document
@@ -10,43 +10,6 @@ import axios from "axios";
  */
 
 export const documentShareService = async (phone, documentName, documentUrl, message, docDetails = {}) => {
-    /**
-     * GLOBAL TOGGLE TO DISCONNECT WHATSAPP SERVICE
-     * Set to true to disable all outgoing WhatsApp messages.
-     */
-    const IS_WHATSAPP_DISCONNECTED = true;
-
-    if (IS_WHATSAPP_DISCONNECTED) {
-        console.log('🔇 WhatsApp service is currently DISCONNECTED. Document share message skipped.');
-        return { success: true, message: 'WhatsApp service is temporarily disconnected' };
-    }
-
-    const productId = process.env.MAYTAPI_PRODUCT_ID;
-    const phoneId = process.env.MAYTAPI_PHONE_ID;
-    const apiToken = process.env.MAYTAPI_API_TOKEN;
-
-    if (!productId || !phoneId || !apiToken) {
-        throw new Error("Maytapi credentials not configured. Check WHATSAPP_PRODUCT_ID, WHATSAPP_PHONE_ID, and WHATSAPP_API_TOKEN in .env");
-    }
-
-    const apiUrl = `https://api.maytapi.com/api/${productId}/${phoneId}/sendMessage`;
-    const headers = {
-        "x-maytapi-key": apiToken,
-        "Content-Type": "application/json",
-    };
-
-    // Build template message with document details
-    const templateLines = [
-        message || `📄 *Document Shared*`,
-        ``,
-        `📋 *Document Name:* ${documentName}`,
-        `📂 *Document Type:* ${docDetails.documentType || '-'}`,
-        `🏷️ *Category:* ${docDetails.category || '-'}`,
-        `👤 *Name:* ${docDetails.companyName || '-'}`,
-        `🔄 *Renewal:* ${docDetails.needsRenewal || 'No'}`,
-        `📅 *Renewal Date:* ${docDetails.renewalDate || '-'}`,
-    ];
-
     // Shorten document URL so WhatsApp auto-links it
     let shortUrl = '';
     if (documentUrl) {
@@ -58,18 +21,32 @@ export const documentShareService = async (phone, documentName, documentUrl, mes
         }
     }
 
-    // Add document URL on its own line if available
-    if (shortUrl) {
-        templateLines.push(``, shortUrl);
-    }
+    /**
+     * META STRUCTURE [document_share_v1]:
+     * Params: 1.DocName, 2.Type, 3.Category, 4.Division, 5.Dept, 6.SharedBy/Company, 7.Renewal, 8.RenewalDate, 9.Message, 10.Link
+     */
+    const { sendWhatsAppTemplate, formatDate } = await import("../whatsappService.js");
+    
+    // Format the renewal date if it exists
+    const formattedRenewalDate = docDetails.renewalDate ? formatDate(docDetails.renewalDate) : '-';
 
-    const textMessage = templateLines.join('\n');
+    const components = [
+        {
+            type: "body",
+            parameters: [
+                { type: "text", text: documentName || '-' },
+                { type: "text", text: docDetails.documentType || '-' },
+                { type: "text", text: docDetails.category || '-' },
+                { type: "text", text: docDetails.division || '-' },
+                { type: "text", text: docDetails.department || '-' },
+                { type: "text", text: docDetails.companyName || '-' },
+                { type: "text", text: docDetails.needsRenewal || 'No' },
+                { type: "text", text: formattedRenewalDate },
+                { type: "text", text: message || '📄 Document Shared' },
+                { type: "text", text: shortUrl || '-' }
+            ]
+        }
+    ];
 
-    const response = await axios.post(apiUrl, {
-        to_number: phone,
-        type: "text",
-        message: textMessage,
-    }, { headers });
-
-    return response.data;
+    return await sendWhatsAppTemplate(phone, 'document_share_v1', components, 'en');
 };

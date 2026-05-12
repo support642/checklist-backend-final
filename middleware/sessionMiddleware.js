@@ -5,7 +5,8 @@ export const sessionMiddleware = async (req, res, next) => {
   const normalizedPath = req.path.replace(/\/+/g, '/');
 
   const isExcluded = normalizedPath.endsWith("/login") ||
-    normalizedPath.endsWith("/login/stream");
+    normalizedPath.endsWith("/login/stream") ||
+    normalizedPath.includes("/whatsapp/webhook");
 
   if (isExcluded) {
     return next();

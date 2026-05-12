@@ -375,8 +375,13 @@ export const postAssignTasks = async (req, res) => {
           doerName: tasks[0].doer,
           taskId: insertedTaskId || "N/A",
           givenBy: tasks[0].givenBy,
+          assignedBy: tasks[0].givenBy,
           description: tasks[0].description,
+          checklistName: tasks[0].description,
+          date: tasks[0].taskStartDate || tasks[0].startDate || tasks[0].dueDate,
           dueDate: tasks[0].taskStartDate || tasks[0].startDate || tasks[0].dueDate,
+          department: tasks[0].department,
+          division: tasks[0].division,
           frequency: tasks[0].frequency,
           // For Maintenance
           machineName: tasks[0].machineName,
@@ -409,7 +414,12 @@ export const postAssignTasks = async (req, res) => {
           if (taskType === "maintenance") {
             console.log(`📱 Sending maintenance WhatsApp to: ${phone}`);
             await whatsappService.sendMaintenanceAssignmentNotification(phone, taskDetails);
+          } else if (tasks[0].frequency !== "one-time") {
+            // It's a checklist (recurring)
+            console.log(`📱 Sending checklist WhatsApp to: ${phone}`);
+            await whatsappService.sendChecklistAssignmentNotification(phone, taskDetails);
           } else {
+            // It's a delegation (one-time)
             console.log(`📱 Sending assignment WhatsApp to: ${phone}`);
             await whatsappService.sendTaskAssignmentNotification(phone, taskDetails);
           }

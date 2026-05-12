@@ -463,14 +463,31 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
           if (adminEmails.length > 0) {
             console.log(`📧 Sending Email status notification (${lowerStatus}) to Admins for Task ID: ${task.task_id}`);
             await sendDelegationStatusUpdateEmail(adminEmails, task, lowerStatus);
+          }
 
-            // TODO: The whatsappService currently hardcodes the admin number (9637655555).
-            // We will update this later to fetch dynamically.
-            console.log(`📱 Sending WhatsApp status notification for Task ID: ${task.task_id}`);
-            await whatsappService.sendDelegationStatusUpdateNotification(task, lowerStatus);
+          // 📱 WhatsApp Notification to the person who GAVE the task
+          try {
+            const giverName = task.given_by || updated.rows[0].given_by;
+            const giverResult = await client.query("SELECT number FROM users WHERE user_name = $1", [giverName]);
+            const giverPhone = giverResult.rows[0]?.number;
+
+            if (giverPhone) {
+              console.log(`📱 Sending WhatsApp status update to ${giverName} (${giverPhone}) for Task ID: ${task.task_id}`);
+              await whatsappService.sendDelegationStatusUpdateNotification(giverPhone, updated.rows[0], lowerStatus);
+            } else {
+              console.warn(`⚠️ Could not find phone number for task creator: ${giverName}`);
+              // Fallback to Admin Number if creator phone is missing
+              const config = await whatsappService.getWhatsAppDynamicConfig();
+              const adminPhone = config.admin.notification_number;
+              if (adminPhone) {
+                await whatsappService.sendDelegationStatusUpdateNotification(adminPhone, updated.rows[0], lowerStatus);
+              }
+            }
+          } catch (wsErr) {
+            console.error("❌ WhatsApp notification specific error:", wsErr);
           }
         } catch (notifErr) {
-          console.error("❌ Email notification error:", notifErr);
+          console.error("❌ Notification error (Email/WhatsApp):", notifErr);
         }
       }
     }

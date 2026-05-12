@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import whatsappService from "../services/whatsappService.js";
 
 // Transfer tasks from user on leave to delegated doer
 const transferTasks = async (req, res) => {
@@ -44,7 +45,10 @@ const transferTasks = async (req, res) => {
       // For Maintenance: Just update the name in maintenance_tasks table
       const updateQuery = `
         UPDATE maintenance_tasks
-        SET name = $1
+        SET name = $1,
+            status = 'Transferred Pending',
+            is_transferred = true,
+            transferred_from = $2
         WHERE name = $2
         AND task_start_date >= $3
         AND task_start_date <= $4
@@ -58,8 +62,8 @@ const transferTasks = async (req, res) => {
           INSERT INTO delegation (
             task_id, task_description, given_by, name, 
             created_at, status, department, division, unit, frequency,
-            task_start_date, planned_date
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            task_start_date, planned_date, is_transferred, transferred_from
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         `;
         return client.query(insertQuery, [
           task.task_id,
@@ -67,13 +71,15 @@ const transferTasks = async (req, res) => {
           task.name, // The original doer (user on leave)
           delegateTo, // The new doer
           task.task_start_date, // Use task start date as created_at
-          'pending',
+          'Transferred Pending',
           task.department || '',
           task.division || '',
           task.unit || '',
           task.frequency || '',
           task.task_start_date,
-          task.planned_date
+          task.planned_date,
+          true,
+          username
         ]);
       });
 
@@ -96,6 +102,40 @@ const transferTasks = async (req, res) => {
       tasksTransferred: tasksToTransfer.length,
       message: `Successfully transferred ${tasksToTransfer.length} tasks from ${username} to ${delegateTo}`
     });
+
+    // 📲 WhatsApp Notifications for Transfers
+    try {
+      const userRes = await pool.query("SELECT number FROM users WHERE user_name = $1", [delegateTo]);
+      const phone = userRes.rows[0]?.number;
+      
+      if (phone) {
+        console.log(`📱 Sending ${tasksToTransfer.length} transfer notifications to: ${delegateTo} (${phone})`);
+        for (const task of tasksToTransfer) {
+          const taskDetails = {
+            recipientName: delegateTo,
+            taskId: task.task_id || task.id,
+            transferredFrom: username,
+            division: task.division || 'N/A',
+            department: task.department || task.machine_department || 'N/A',
+            description: task.task_description,
+            dueDate: task.planned_date || task.task_start_date,
+            // For Maintenance-specific fields if needed (though Transfer template is usually generic)
+            machineName: task.machine_name,
+            partName: Array.isArray(task.part_name) ? task.part_name.join(', ') : task.part_name,
+            partArea: task.part_area,
+            givenBy: task.given_by || username // Who assigned it originally or who transferred it
+          };
+
+          if (category === 'Maintenance') {
+            await whatsappService.sendMaintenanceAssignmentNotification(phone, taskDetails);
+          } else {
+            await whatsappService.sendTaskTransferNotification(phone, taskDetails);
+          }
+        }
+      }
+    } catch (notifErr) {
+      console.error("❌ Transfer WhatsApp notification error:", notifErr);
+    }
 
   } catch (error) {
     await client.query('ROLLBACK');
@@ -194,10 +234,13 @@ const assignIndividualTasks = async (req, res) => {
       const updatePromises = delegationAssignments.map(task => {
         const updateQuery = `
           UPDATE maintenance_tasks
-          SET name = $1
-          WHERE id = $2
+          SET name = $1,
+              status = 'Transferred Pending',
+              is_transferred = true,
+              transferred_from = $2
+          WHERE id = $3
         `;
-        return client.query(updateQuery, [task.delegateTo, task.task_id]);
+        return client.query(updateQuery, [task.delegateTo, task.username, task.task_id]);
       });
       await Promise.all(updatePromises);
     } else {
@@ -208,8 +251,8 @@ const assignIndividualTasks = async (req, res) => {
             INSERT INTO delegation (
               task_id, task_description, given_by, name, 
               created_at, status, department, division, unit, frequency,
-              task_start_date, planned_date
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+              task_start_date, planned_date, is_transferred, transferred_from
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
           `;
           return client.query(insertQuery, [
             task.task_id,
@@ -217,13 +260,15 @@ const assignIndividualTasks = async (req, res) => {
             task.username,
             task.delegateTo,
             task.task_start_date,
-            'pending',
+            'Transferred Pending',
             task.department || '',
             task.division || '',
             task.unit || '',
             task.frequency || '',
             task.task_start_date,
-            task.planned_date
+            task.planned_date,
+            true,
+            task.username
           ]);
         });
         await Promise.all(insertPromises);
@@ -266,6 +311,37 @@ const assignIndividualTasks = async (req, res) => {
       tasksDeleted: deletedCount,
       message: message
     });
+
+    // 📲 WhatsApp Notifications for Individual Assignments
+    try {
+      for (const task of delegationAssignments) {
+        const userRes = await pool.query("SELECT number FROM users WHERE user_name = $1", [task.delegateTo]);
+        const phone = userRes.rows[0]?.number;
+
+        if (phone) {
+          const taskDetails = {
+            recipientName: task.delegateTo,
+            taskId: task.task_id,
+            transferredFrom: task.username,
+            division: task.division || 'N/A',
+            department: task.department || 'N/A',
+            description: task.task_description,
+            dueDate: task.planned_date || task.task_start_date,
+            givenBy: task.username
+          };
+
+          if (category === 'Maintenance') {
+             // For maintenance, we might want to fetch more details if missing, 
+             // but let's assume Transfer template is safer if details are sparse.
+             await whatsappService.sendTaskTransferNotification(phone, taskDetails);
+          } else {
+             await whatsappService.sendTaskTransferNotification(phone, taskDetails);
+          }
+        }
+      }
+    } catch (notifErr) {
+      console.error("❌ Individual Transfer WhatsApp notification error:", notifErr);
+    }
 
   } catch (error) {
     await client.query('ROLLBACK');

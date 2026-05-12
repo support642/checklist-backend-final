@@ -41,6 +41,7 @@ import assetUserRoutes from "./routes/asset-routes/userRoutes.js";
 // Repair Module Routes
 import repairRoutes from "./routes/repair-routes/repairRoutes.js";
 import workingDateHistoryRoutes from "./routes/workingDateHistoryRoutes.js";
+import whatsappRoutes from "./routes/whatsappRoutes.js";
 
 import pool from "./config/db.js";
 import { sessionMiddleware } from "./middleware/sessionMiddleware.js";
@@ -99,6 +100,9 @@ app.use("/api/repair", repairRoutes);
 
 // WORKING DATE HISTORY ROUTES
 app.use("/api/working-date-history", workingDateHistoryRoutes);
+
+// WHATSAPP WEBHOOK ROUTES
+app.use("/api/v1/whatsapp", whatsappRoutes);
 
 
 // SERVER RUN

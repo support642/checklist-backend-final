@@ -1,6 +1,6 @@
-// controllers/settingController.js
 import pool from "../config/db.js";
 import { triggerUserLogout } from "./loginController.js";
+import { fetchAndSyncWhatsAppTemplates } from "../services/whatsappService.js";
 
 function getDefaultPermissions(role) {
   if (role === "user") {
@@ -68,7 +68,7 @@ export const getUsers = async (req, res) => {
     // Apply role-based filtering if requester info is provided
     if (requesterRole) {
       const role = requesterRole.toUpperCase();
-      
+
       if (role === "SUPER_ADMIN") {
         // No filter
       } else if (role === "DIV_ADMIN") {
@@ -228,7 +228,7 @@ export const updateUser = async (req, res) => {
     if (currentUserResult.rows.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
-    
+
     const currentUser = currentUserResult.rows[0];
     const oldUserName = currentUser.user_name;
 
@@ -455,7 +455,7 @@ export const createMachine = async (req, res) => {
     // Ensure part_name and part_images are arrays
     const partNameArray = Array.isArray(part_name) ? part_name : (part_name ? [part_name] : []);
     const partImagesArray = Array.isArray(part_images) ? part_images : (part_images ? [part_images] : []);
-    
+
     const result = await pool.query(
       "INSERT INTO machine_parts (machine_name, part_name, part_images, machine_area, machine_department, machine_division) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
       [machine_name || null, partNameArray, partImagesArray, machine_area || null, machine_department || null, machine_division || null]
@@ -478,7 +478,7 @@ export const updateMachine = async (req, res) => {
     // Ensure part_name and part_images are arrays
     const partNameArray = Array.isArray(part_name) ? part_name : (part_name ? [part_name] : []);
     const partImagesArray = Array.isArray(part_images) ? part_images : (part_images ? [part_images] : []);
-    
+
     const result = await pool.query(
       "UPDATE machine_parts SET machine_name = $1, part_name = $2, part_images = $3, machine_area = $4, machine_department = $5, machine_division = $6 WHERE id = $7 RETURNING *",
       [machine_name || null, partNameArray, partImagesArray, machine_area || null, machine_department || null, machine_division || null, id]
@@ -526,3 +526,52 @@ export const uploadPartImage = async (req, res) => {
     res.status(500).json({ error: "Upload failed" });
   }
 };
+
+/*******************************
+ * 15) SYSTEM SETTINGS
+ *******************************/
+export const getSystemSettings = async (req, res) => {
+  try {
+    const { category } = req.query;
+    let query = "SELECT * FROM system_settings";
+    const params = [];
+
+    if (category) {
+      query += " WHERE category = $1";
+      params.push(category);
+    }
+
+    query += " ORDER BY category, setting_key ASC";
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error("❌ Error fetching system settings:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+};
+
+export const updateSystemSetting = async (req, res) => {
+  try {
+    const { setting_key, setting_value } = req.body;
+    
+    if (!setting_key) {
+      return res.status(400).json({ error: "setting_key is required" });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO system_settings (category, setting_key, setting_value)
+       VALUES ('general', $1, $2)
+       ON CONFLICT (setting_key) 
+       DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [setting_key, setting_value]
+    );
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("❌ Error updating system setting:", error);
+    res.status(500).json({ error: "Database error" });
+  }
+};
+
+

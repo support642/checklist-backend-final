@@ -14,7 +14,9 @@ import {
   createMachine,
   updateMachine,
   deleteMachine,
-  uploadPartImage
+  uploadPartImage,
+  getSystemSettings,
+  updateSystemSetting
 } from "../controllers/settingController.js";
 import upload from "../middleware/s3Upload.js";
 
@@ -39,5 +41,9 @@ router.post("/machines", createMachine);
 router.put("/machines/:id", updateMachine);
 router.delete("/machines/:id", deleteMachine);
 router.post("/upload-part-image", upload.single("image"), uploadPartImage);
+
+// SYSTEM SETTINGS & WHATSAPP
+router.get("/system", getSystemSettings);
+router.post("/system", updateSystemSetting);
 
 export default router;

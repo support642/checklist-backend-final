@@ -18,6 +18,7 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         const nameFilter = req.query.name || "all";
         const divisionFilter = req.query.divisionFilter || "all";
         const departmentFilter = req.query.departmentFilter || "all";
+        const unitFilter = req.query.unitFilter || "all";
         const startDate = req.query.startDate;
         const endDate = req.query.endDate;
 
@@ -73,6 +74,12 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         if (departmentFilter !== "all" && departmentFilter !== "undefined") {
             where += ` AND LOWER(t.department) = LOWER($${queryParams.length + 1}) `;
             queryParams.push(departmentFilter);
+        }
+
+        // ⭐ Unit Filter
+        if (unitFilter !== "all" && unitFilter !== "undefined") {
+            where += ` AND LOWER(t.unit) = LOWER($${queryParams.length + 1}) `;
+            queryParams.push(unitFilter);
         }
 
         const requesterUnit = req.query.unit;
@@ -203,6 +210,7 @@ export const getMaintenanceHistory = async (req, res) => {
         const divisionFilter = req.query.divisionFilter;
         const departmentFilter = req.query.departmentFilter;
         const nameFilter = req.query.nameFilter;
+        const unitFilter = req.query.unitFilter;
 
         const whereConditions = [`t.submission_date IS NOT NULL`];
         const countWhereConditions = [`t.submission_date IS NOT NULL`];
@@ -250,6 +258,10 @@ export const getMaintenanceHistory = async (req, res) => {
         }
         if (nameFilter && nameFilter !== 'all') {
             addFilter(`LOWER(t.name) = LOWER(?)`, nameFilter);
+        }
+
+        if (unitFilter && unitFilter !== 'all') {
+            addFilter(`LOWER(t.unit) = LOWER(?)`, unitFilter);
         }
 
         if (search) {
