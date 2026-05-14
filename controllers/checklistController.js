@@ -134,6 +134,7 @@ export const getPendingChecklist = async (req, res) => {
         admin_done_remarks,
         unit,
         division,
+        submitted_by,
         COUNT(*) OVER() AS total_count
       FROM checklist
       WHERE ${where}
@@ -351,7 +352,8 @@ export const getChecklistHistory = async (req, res) => {
         submission_date::text as submission_date,
         admin_done_remarks,
         unit,
-        division
+        division,
+        submitted_by
       FROM checklist
       WHERE ${where}
       ORDER BY submission_date DESC
@@ -477,7 +479,8 @@ export const updateChecklist = async (req, res) => {
            status = $1,
             remark = $2,
             submission_date = date_trunc('second', NOW() AT TIME ZONE 'Asia/Kolkata'),
-            image = $3
+            image = $3,
+            submitted_by = $5
           WHERE task_id = $4
         `;
 
@@ -486,6 +489,7 @@ export const updateChecklist = async (req, res) => {
           item.remarks || "",
           finalImageUrl,
           item.taskId,
+          item.submittedBy || null,
         ]);
       }
 

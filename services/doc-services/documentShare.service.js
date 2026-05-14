@@ -35,14 +35,14 @@ export const documentShareService = async (phone, documentName, documentUrl, mes
             type: "body",
             parameters: [
                 { type: "text", text: documentName || '-' },
+                { type: "text", text: message || '📄 Document Shared' },
+                { type: "text", text: docDetails.companyName || '-' },
+                { type: "text", text: formattedRenewalDate },
+                { type: "text", text: docDetails.department || '-' },
+                { type: "text", text: docDetails.division || '-' },
                 { type: "text", text: docDetails.documentType || '-' },
                 { type: "text", text: docDetails.category || '-' },
-                { type: "text", text: docDetails.division || '-' },
-                { type: "text", text: docDetails.department || '-' },
-                { type: "text", text: docDetails.companyName || '-' },
                 { type: "text", text: docDetails.needsRenewal || 'No' },
-                { type: "text", text: formattedRenewalDate },
-                { type: "text", text: message || '📄 Document Shared' },
                 { type: "text", text: shortUrl || '-' }
             ]
         }

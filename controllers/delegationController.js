@@ -179,7 +179,8 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
         d.adminremarks,
         d.department,
         d.unit,
-        d.division
+        d.division,
+        dd.submitted_by
       FROM delegation_done dd
       LEFT JOIN delegation d ON dd.task_id::BIGINT = d.task_id
       ${whereClause}
@@ -395,8 +396,8 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
 
       const insertQuery = `
         INSERT INTO delegation_done
-        (task_id, status, next_extend_date, reason, image_url, name, task_description, given_by)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        (task_id, status, next_extend_date, reason, image_url, name, task_description, given_by, submitted_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         RETURNING *;
       `;
 
@@ -408,7 +409,8 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
         finalImageUrl,
         task.name,
         task.task_description,
-        task.given_by
+        task.given_by,
+        task.submittedBy || null
       ];
 
       console.log("💾 INSERT delegation_done:", insertValues);
@@ -427,7 +429,8 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
             updated_at = NOW() AT TIME ZONE 'Asia/Kolkata',
             remarks = $2,
             planned_date = $3,
-            image = $4
+            image = $4,
+            submitted_by = $6
         WHERE task_id = $5
         RETURNING *;
       `;
@@ -437,7 +440,8 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
         task.reason || "",
         task.next_extend_date || task.planned_date,
         finalImageUrl,
-        task.task_id
+        task.task_id,
+        task.submittedBy || null
       ];
 
       console.log("💾 UPDATE delegation:", updateValues);
@@ -473,14 +477,25 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
 
             if (giverPhone) {
               console.log(`📱 Sending WhatsApp status update to ${giverName} (${giverPhone}) for Task ID: ${task.task_id}`);
-              await whatsappService.sendDelegationStatusUpdateNotification(giverPhone, updated.rows[0], lowerStatus);
+              
+              if (lowerStatus === 'done') {
+                // New specialized completion alert for the person who assigned the task
+                await whatsappService.sendDelegationCompletionToAdmin(giverPhone, updated.rows[0]);
+              } else {
+                // Existing general status update notification
+                await whatsappService.sendDelegationStatusUpdateNotification(giverPhone, updated.rows[0], lowerStatus);
+              }
             } else {
               console.warn(`⚠️ Could not find phone number for task creator: ${giverName}`);
               // Fallback to Admin Number if creator phone is missing
               const config = await whatsappService.getWhatsAppDynamicConfig();
               const adminPhone = config.admin.notification_number;
               if (adminPhone) {
-                await whatsappService.sendDelegationStatusUpdateNotification(adminPhone, updated.rows[0], lowerStatus);
+                if (lowerStatus === 'done') {
+                  await whatsappService.sendDelegationCompletionToAdmin(adminPhone, updated.rows[0]);
+                } else {
+                  await whatsappService.sendDelegationStatusUpdateNotification(adminPhone, updated.rows[0], lowerStatus);
+                }
               }
             }
           } catch (wsErr) {

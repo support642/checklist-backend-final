@@ -1,6 +1,7 @@
 import pool from "../config/db.js";
 import { triggerUserLogout } from "./loginController.js";
 import { fetchAndSyncWhatsAppTemplates } from "../services/whatsappService.js";
+import { processOverdueReminders } from "../services/notificationScheduler.js";
 
 function getDefaultPermissions(role) {
   if (role === "user") {
@@ -571,6 +572,23 @@ export const updateSystemSetting = async (req, res) => {
   } catch (error) {
     console.error("❌ Error updating system setting:", error);
     res.status(500).json({ error: "Database error" });
+  }
+};
+
+/**
+ * Manually trigger overdue task WhatsApp notifications
+ */
+export const triggerOverdueReminders = async (req, res) => {
+  try {
+    const result = await processOverdueReminders();
+    if (result.success) {
+      res.json({ message: `Successfully processed ${result.count} reminders.` });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+  } catch (error) {
+    console.error("❌ Error triggering overdue reminders:", error);
+    res.status(500).json({ error: "Failed to trigger reminders" });
   }
 };
 

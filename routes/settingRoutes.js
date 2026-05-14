@@ -16,7 +16,8 @@ import {
   deleteMachine,
   uploadPartImage,
   getSystemSettings,
-  updateSystemSetting
+  updateSystemSetting,
+  triggerOverdueReminders
 } from "../controllers/settingController.js";
 import upload from "../middleware/s3Upload.js";
 
@@ -45,5 +46,6 @@ router.post("/upload-part-image", upload.single("image"), uploadPartImage);
 // SYSTEM SETTINGS & WHATSAPP
 router.get("/system", getSystemSettings);
 router.post("/system", updateSystemSetting);
+router.post("/whatsapp/trigger-overdue", triggerOverdueReminders);
 
 export default router;

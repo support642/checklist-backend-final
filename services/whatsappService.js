@@ -67,15 +67,19 @@ export const getWhatsAppDynamicConfig = async () => {
         transfer: {
           name: dbConfig['whatsapp_transfer_name'] || 'task_transferred',
           lang: dbConfig['whatsapp_transfer_lang'] || 'en'
+        },
+        overdue: {
+          name: dbConfig['whatsapp_overdue_name'] || 'task_overdue_summary_v1',
+          lang: dbConfig['whatsapp_overdue_lang'] || 'en'
         }
       },
       admin: {
-        notification_number: dbConfig['whatsapp_admin_number'] || process.env.WHATSAPP_ADMIN_NUMBER || '8827194777'
+        notification_number: dbConfig['whatsapp_admin_number'] || process.env.WHATSAPP_ADMIN_NUMBER || '917772999905'
       }
     };
 
     // Log a warning if any mapping is missing in DB
-    const actions = ['task_assignment', 'maintenance', 'delegation', 'checklist'];
+    const actions = ['task_assignment', 'maintenance', 'delegation', 'checklist', 'overdue'];
     actions.forEach(action => {
       if (!dbConfig[`whatsapp_${action}_name`]) {
         console.warn(`⚠️ Warning: WhatsApp template for [${action}] is not mapped in system_settings. Using hardcoded default.`);
@@ -94,10 +98,11 @@ export const getWhatsAppDynamicConfig = async () => {
         maintenance: { name: 'maintenance_task', lang: 'en' },
         delegation: { name: 'delegation_status', lang: 'en' },
         checklist: { name: 'checklist_assignment_v2', lang: 'en' },
-        transfer: { name: 'task_transferred', lang: 'en' }
+        transfer: { name: 'task_transferred', lang: 'en' },
+        overdue: { name: 'task_overdue_summary_v1', lang: 'en' }
       },
       admin: {
-        notification_number: process.env.WHATSAPP_ADMIN_NUMBER || '8827194777'
+        notification_number: process.env.WHATSAPP_ADMIN_NUMBER || '917772999905'
       }
     };
   }
@@ -438,19 +443,19 @@ export const sendTaskAssignmentNotification = async (phoneNumber, taskDetails) =
 
   /**
    * EXPECTED META STRUCTURE [new_task_assign]:
-   * Params: 1.Name, 2.ID, 3.AssignedBy, 4.Division, 5.Department, 6.Description, 7.Deadline, 8.Link
+   * Params: 1.Name, 2.Desc, 3.Deadline, 4.AssignedBy, 5.Dept, 6.Division, 7.ID, 8.Link
    */
   const components = [
     {
       type: "body",
       parameters: [
         { type: "text", text: String(doerName || 'Team Member') },
-        { type: "text", text: String(taskId || 'N/A') },
-        { type: "text", text: String(givenBy || 'N/A') },
-        { type: "text", text: String(division || 'N/A') },
-        { type: "text", text: String(department || 'N/A') },
         { type: "text", text: String(description || 'N/A') },
         { type: "text", text: String(formatDate(dueDate)) },
+        { type: "text", text: String(givenBy || 'N/A') },
+        { type: "text", text: String(department || 'N/A') },
+        { type: "text", text: String(division || 'N/A') },
+        { type: "text", text: String(taskId || 'N/A') },
         { type: "text", text: String(appLink) }
       ]
     }
@@ -478,15 +483,16 @@ export const sendMaintenanceAssignmentNotification = async (phoneNumber, taskDet
     {
       type: "body",
       parameters: [
+        { type: "text", text: String(doerName || 'Team Member') },
+        { type: "text", text: description || 'N/A' },
+        { type: "text", text: formatDate(dueDate) },
         { type: "text", text: machineName || 'N/A' },
         { type: "text", text: partName || 'N/A' },
         { type: "text", text: partArea || 'N/A' },
-        { type: "text", text: String(division || 'N/A') },
-        { type: "text", text: String(department || 'N/A') },
-        { type: "text", text: String(taskId || 'N/A') },
         { type: "text", text: givenBy || 'N/A' },
-        { type: "text", text: description || 'N/A' },
-        { type: "text", text: formatDate(dueDate) },
+        { type: "text", text: String(department || 'N/A') },
+        { type: "text", text: String(division || 'N/A') },
+        { type: "text", text: String(taskId || 'N/A') },
         { type: "text", text: appLink }
       ]
     }
@@ -517,12 +523,12 @@ export const sendTaskTransferNotification = async (phoneNumber, taskDetails) => 
       type: "body",
       parameters: [
         { type: "text", text: String(recipientName || 'Team Member') },
-        { type: "text", text: String(taskId || 'N/A') },
-        { type: "text", text: String(transferredFrom || 'N/A') },
-        { type: "text", text: String(division || 'N/A') },
-        { type: "text", text: String(department || 'N/A') },
         { type: "text", text: String(description || 'N/A') },
         { type: "text", text: String(formatDate(dueDate)) },
+        { type: "text", text: String(transferredFrom || 'N/A') },
+        { type: "text", text: String(department || 'N/A') },
+        { type: "text", text: String(division || 'N/A') },
+        { type: "text", text: String(taskId || 'N/A') },
         { type: "text", text: String(appLink) }
       ]
     }
@@ -562,12 +568,12 @@ export const sendDelegationStatusUpdateNotification = async (phoneNumber, taskDe
       parameters: [
         { type: "text", text: statusText.toUpperCase() },
         { type: "text", text: name || 'N/A' },
-        { type: "text", text: String(task_id || 'N/A') },
-        { type: "text", text: division || 'N/A' },
-        { type: "text", text: department || 'N/A' },
         { type: "text", text: task_description || 'N/A' },
         { type: "text", text: reason || 'N/A' },
         { type: "text", text: statusText },
+        { type: "text", text: division || 'N/A' },
+        { type: "text", text: department || 'N/A' },
+        { type: "text", text: String(task_id || 'N/A') },
         { type: "text", text: appLink }
       ]
     }
@@ -594,13 +600,13 @@ export const sendChecklistAssignmentNotification = async (phoneNumber, checklist
     {
       type: "body",
       parameters: [
-        { type: "text", text: doerName || 'Team Member' },
-        { type: "text", text: checklistName || 'N/A' },
-        { type: "text", text: formatDate(date) },
-        { type: "text", text: assignedBy || 'N/A' },
-        { type: "text", text: department || 'N/A' },
-        { type: "text", text: division || 'N/A' },
-        { type: "text", text: appLink }
+        { type: "text", text: String(doerName || 'Team Member') },
+        { type: "text", text: String(checklistName || 'N/A') },
+        { type: "text", text: String(formatDate(date)) },
+        { type: "text", text: String(assignedBy || 'N/A') },
+        { type: "text", text: String(department || 'N/A') },
+        { type: "text", text: String(division || 'N/A') },
+        { type: "text", text: String(appLink) }
       ]
     }
   ];
@@ -611,6 +617,155 @@ export const sendChecklistAssignmentNotification = async (phoneNumber, checklist
   return await sendWhatsAppTemplate(phoneNumber, template.name, components, template.lang);
 };
 
+/**
+ * Send task overdue alert via WhatsApp Template
+ * @param {string|number} phoneNumber - Recipient phone number
+ * @param {object} taskDetails - Task details object
+ */
+export const sendTaskOverdueNotification = async (phoneNumber, taskDetails) => {
+  const { doerName, taskId, givenBy, description, dueDate, division, department } = taskDetails;
+
+  const appLink = 'https://checklist-frontend-nu.vercel.app';
+
+  /**
+   * EXPECTED META STRUCTURE [task_overdue_v1]:
+   * Params: 1.Name, 2.ID, 3.AssignedBy, 4.Division, 5.Department, 6.Description, 7.Deadline, 8.Link
+   */
+  const components = [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: String(doerName || 'Team Member') },
+        { type: "text", text: String(taskId || 'N/A') },
+        { type: "text", text: String(givenBy || 'N/A') },
+        { type: "text", text: String(division || 'N/A') },
+        { type: "text", text: String(department || 'N/A') },
+        { type: "text", text: String(description || 'N/A') },
+        { type: "text", text: String(formatDate(dueDate)) },
+        { type: "text", text: String(appLink) }
+      ]
+    }
+  ];
+
+  const config = await getWhatsAppDynamicConfig();
+  const template = config.templates.overdue;
+
+  return await sendWhatsAppTemplate(phoneNumber, template.name, components, template.lang);
+};
+
+/**
+ * Send a bulk overdue task summary via WhatsApp Template
+ * @param {string|number} phoneNumber - Recipient phone number
+ * @param {string} userName - Employee name
+ * @param {Array} tasks - Array of task objects { taskId, description, dueDate }
+ */
+export const sendTaskOverdueSummaryNotification = async (phoneNumber, userName, tasks) => {
+  if (!tasks || tasks.length === 0) return;
+
+  const appLink = 'https://checklist-frontend-nu.vercel.app';
+  
+  // Build the summary string (bulled list)
+  // WhatsApp has a limit on parameter length (~1024 chars), so we truncate if needed
+  let summaryText = '';
+  tasks.forEach((t, index) => {
+    const line = `• #${t.taskId}: ${t.description?.substring(0, 40) || 'N/A'} (Due: ${formatDate(t.dueDate)})\n`;
+    if ((summaryText + line).length < 900) { // Keep buffer for safety
+      summaryText += line;
+    }
+  });
+
+  if (tasks.length > (summaryText.match(/•/g) || []).length) {
+    summaryText += `... and ${tasks.length - (summaryText.match(/•/g) || []).length} more tasks.`;
+  }
+
+  /**
+   * EXPECTED META STRUCTURE [task_overdue_summary_v1]:
+   * Params: 1.UserName, 2.TaskCount, 3.SummaryList, 4.PortalLink
+   */
+  const components = [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: String(userName || 'Team Member') },
+        { type: "text", text: String(tasks.length) },
+        { type: "text", text: String(summaryText.trim()) },
+        { type: "text", text: String(appLink) }
+      ]
+    }
+  ];
+
+  const config = await getWhatsAppDynamicConfig();
+  const template = config.templates.overdue;
+
+  return await sendWhatsAppTemplate(phoneNumber, template.name, components, template.lang);
+};
+
+
+/**
+ * Send delegation completion alert to the admin/giver
+ */
+export const sendDelegationCompletionToAdmin = async (phoneNumber, taskDetails) => {
+  const { name, task_id, task_description, division, department } = taskDetails;
+  const appLink = 'https://checklist-frontend-nu.vercel.app';
+
+  /**
+   * EXPECTED META STRUCTURE [delegation_task_completed_admin]:
+   * Params: 1.AdminName, 2.DoerName, 3.TaskDesc, 4.TaskID, 5.Division, 6.Dept, 7.Link
+   */
+  const components = [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: 'Admin' }, // Generic or look up
+        { type: "text", text: name || 'Team Member' },
+        { type: "text", text: task_description || 'N/A' },
+        { type: "text", text: String(task_id || 'N/A') },
+        { type: "text", text: division || 'N/A' },
+        { type: "text", text: department || 'N/A' },
+        { type: "text", text: appLink }
+      ]
+    }
+  ];
+
+  return await sendWhatsAppTemplate(phoneNumber, 'delegation_task_completed_admin', components, 'en');
+};
+
+/**
+ * Send daily management summary report
+ */
+export const sendDailyManagementSummary = async (phoneNumber, stats) => {
+  /**
+   * EXPECTED META STRUCTURE [daily_management_summary]:
+   * Params: 
+   * 1.Period
+   * Checklist: 2.Total, 3.Done, 4.Pend, 5.Over
+   * Delegation: 6.Total, 7.Done, 8.Pend, 9.Over
+   * Maintenance: 10.Total, 11.Done, 12.Pend, 13.Over
+   */
+  const components = [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: stats.period },
+        { type: "text", text: String(stats.checklist.total) },
+        { type: "text", text: String(stats.checklist.done) },
+        { type: "text", text: String(stats.checklist.pending) },
+        { type: "text", text: String(stats.checklist.overdue) },
+        { type: "text", text: String(stats.delegation.total) },
+        { type: "text", text: String(stats.delegation.done) },
+        { type: "text", text: String(stats.delegation.pending) },
+        { type: "text", text: String(stats.delegation.overdue) },
+        { type: "text", text: String(stats.maintenance.total) },
+        { type: "text", text: String(stats.maintenance.done) },
+        { type: "text", text: String(stats.maintenance.pending) },
+        { type: "text", text: String(stats.maintenance.overdue) }
+      ]
+    }
+  ];
+
+  return await sendWhatsAppTemplate(phoneNumber, 'daily_management_summary', components, 'en');
+};
+
 export default {
   sendWhatsAppMessage,
   sendWhatsAppTemplate,
@@ -618,7 +773,11 @@ export default {
   sendMaintenanceAssignmentNotification,
   sendTaskTransferNotification,
   sendDelegationStatusUpdateNotification,
-  sendChecklistAssignmentNotification
+  sendChecklistAssignmentNotification,
+  sendTaskOverdueNotification,
+  sendTaskOverdueSummaryNotification,
+  sendDelegationCompletionToAdmin,
+  sendDailyManagementSummary
 };
 
 

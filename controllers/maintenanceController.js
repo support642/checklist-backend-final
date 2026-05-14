@@ -29,10 +29,7 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         // Base filter for pending tasks
         let where = `t.submission_date IS NULL AND DATE(t.task_start_date) <= CURRENT_DATE + INTERVAL '1 day'`;
 
-        if (startDate && endDate) {
-            where += ` AND t.task_start_date >= $${queryParams.length + 1} AND t.task_start_date <= $${queryParams.length + 2} `;
-            queryParams.push(startDate, `${endDate} 23:59:59`);
-        }
+
 
         // ⭐ Status Filter (Today, Overdue, Upcoming, Leave, Day off)
         if (status === "today") {
@@ -159,6 +156,7 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         t.machine_part_id,
         t.machine_department,
         t.machine_division,
+        t.submitted_by,
         COUNT(*) OVER() AS total_count
       FROM maintenance_tasks t
       LEFT JOIN machine_parts mp ON t.machine_part_id = mp.id
@@ -178,10 +176,25 @@ export const getPendingMaintenanceTasks = async (req, res) => {
 
         const totalCount = rows.length > 0 ? rows[0].total_count : 0;
 
+        // Global stats calculation for Pending (today) and Overdue (past)
+        const statsQuery = `
+            SELECT 
+                COUNT(CASE WHEN DATE(t.task_start_date) = CURRENT_DATE THEN 1 END)::int AS today_count,
+                COUNT(CASE WHEN DATE(t.task_start_date) < CURRENT_DATE THEN 1 END)::int AS overdue_count
+            FROM maintenance_tasks t
+            LEFT JOIN machine_parts mp ON t.machine_part_id = mp.id
+            WHERE ($1::int IS NOT NULL OR $2::int IS NOT NULL OR 1=1) AND ${where}
+        `;
+        const statsRes = await pool.query(statsQuery, queryParams);
+        const todayCount = statsRes.rows[0]?.today_count || 0;
+        const overdueCount = statsRes.rows[0]?.overdue_count || 0;
+
         res.json({
             data: rows,
             page,
             totalCount,
+            todayCount,
+            overdueCount
         });
     } catch (error) {
         console.error("❌ Error fetching pending maintenance tasks:", error.message);
@@ -321,7 +334,7 @@ export const getMaintenanceHistory = async (req, res) => {
                 COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', ')) as part_name,
                 COALESCE(mp.machine_area, t.part_area) as part_area,
                 t.duration, t.planned_date::text as planned_date, t.created_at::text as created_at,
-                t.machine_part_id, t.machine_department, t.machine_division,
+                t.machine_part_id, t.machine_department, t.machine_division, t.submitted_by,
                 t.submission_date as raw_submission_date
             FROM maintenance_tasks t
             LEFT JOIN machine_parts mp ON t.machine_part_id = mp.id
@@ -452,7 +465,8 @@ export const updateMaintenanceTasks = async (req, res) => {
             status = $1,
             remarks = $2,
             submission_date = date_trunc('second', NOW() AT TIME ZONE 'Asia/Kolkata'),
-            uploaded_image_url = $3
+            uploaded_image_url = $3,
+            submitted_by = $5
           WHERE id = $4
         `;
 
@@ -461,6 +475,7 @@ export const updateMaintenanceTasks = async (req, res) => {
                     item.remarks || "",
                     finalImageUrl,
                     item.taskId,
+                    item.submittedBy || null,
                 ]);
             }
 

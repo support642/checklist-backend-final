@@ -42,6 +42,7 @@ import assetUserRoutes from "./routes/asset-routes/userRoutes.js";
 import repairRoutes from "./routes/repair-routes/repairRoutes.js";
 import workingDateHistoryRoutes from "./routes/workingDateHistoryRoutes.js";
 import whatsappRoutes from "./routes/whatsappRoutes.js";
+import { initOverdueScheduler } from "./services/notificationScheduler.js";
 
 import pool from "./config/db.js";
 import { sessionMiddleware } from "./middleware/sessionMiddleware.js";
@@ -127,4 +128,6 @@ app.listen(PORT, "0.0.0.0", async () => {
   } catch (err) {
     console.error("❌ Error invalidating sessions on startup:", err);
   }
+  // Initialize Overdue Task Scheduler
+  initOverdueScheduler();
 });
