@@ -180,7 +180,8 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
         d.department,
         d.unit,
         d.division,
-        dd.submitted_by
+        dd.submitted_by,
+        dd.approved_by
       FROM delegation_done dd
       LEFT JOIN delegation d ON dd.task_id::BIGINT = d.task_id
       ${whereClause}
@@ -350,31 +351,35 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
       if (task.image_base64 && typeof task.image_base64 === "string") {
         try {
           // CASE 1: NEW UPLOAD (BASE64)
-          if (task.image_base64.startsWith("data:image")) {
-            console.log("📸 Base64 image detected → Uploading to S3...");
+          if (task.image_base64.startsWith("data:")) {
+            console.log("📂 File data detected → Processing for S3...");
 
+            const mimeType = task.image_base64.split(";")[0].split(":")[1];
             const base64Data = task.image_base64.split(";base64,").pop();
             const buffer = Buffer.from(base64Data, "base64");
 
+            let extension = "jpg";
+            if (mimeType.includes("pdf")) extension = "pdf";
+            else if (mimeType.includes("sheet") || mimeType.includes("excel")) extension = "xlsx";
+            else if (mimeType.includes("png")) extension = "png";
+
             const fakeFile = {
-              originalname: `delegation_${task.task_id}_${Date.now()}.jpg`,
+              originalname: `delegation_${task.task_id}_${Date.now()}.${extension}`,
               buffer,
-              mimetype: "image/jpeg",
+              mimetype: mimeType,
             };
 
             finalImageUrl = await uploadToS3(fakeFile);
             console.log("✅ Uploaded to S3:", finalImageUrl);
           }
-
           // CASE 2: ALREADY S3 URL
           else if (task.image_base64.startsWith("http")) {
-            console.log("ℹ Existing S3 image detected → Keeping original URL");
+            console.log("ℹ Existing S3 file detected → Keeping original URL");
             finalImageUrl = task.image_base64;
           }
-
-          // CASE 3: Invalid image string
+          // CASE 3: Invalid data string
           else {
-            console.log("⚠ Invalid image string → Skipping image");
+            console.log("⚠ Invalid file data string → Skipping");
             finalImageUrl = null;
           }
 
@@ -477,7 +482,7 @@ export const insertDelegationDoneAndUpdate = async (req, res) => {
 
             if (giverPhone) {
               console.log(`📱 Sending WhatsApp status update to ${giverName} (${giverPhone}) for Task ID: ${task.task_id}`);
-              
+
               if (lowerStatus === 'done') {
                 // New specialized completion alert for the person who assigned the task
                 await whatsappService.sendDelegationCompletionToAdmin(giverPhone, updated.rows[0]);
@@ -626,13 +631,18 @@ export const adminDoneDelegation = async (req, res) => {
     const sql = `
       UPDATE delegation_done
       SET admin_done = 'Done',
-          admin_done_remarks = $2
+          admin_done_remarks = $2,
+          approved_by = $3
       WHERE id = $1
     `;
 
     for (const item of items) {
-      // item must have id, optional remarks
-      await client.query(sql, [item.id, item.remarks || null]);
+      // item must have id, optional remarks, optional approvedBy
+      await client.query(sql, [
+        item.id,
+        item.remarks || null,
+        item.approvedBy || null
+      ]);
     }
 
     await client.query("COMMIT");

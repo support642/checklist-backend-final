@@ -76,8 +76,15 @@ export const getUsers = async (req, res) => {
         params.push(requesterUnit, requesterDivision);
         filterQuery += ` AND LOWER(unit) = LOWER($1) AND LOWER(division) = LOWER($2)`;
       } else if (role === "ADMIN") {
-        params.push(requesterUnit, requesterDivision, requesterDepartment);
-        filterQuery += ` AND LOWER(unit) = LOWER($1) AND LOWER(division) = LOWER($2) AND LOWER(department) = LOWER($3)`;
+        params.push(requesterUnit, requesterDivision);
+        filterQuery += ` AND LOWER(unit) = LOWER($1) AND LOWER(division) = LOWER($2)`;
+        
+        if (requesterDepartment) {
+          // Handle multiple departments if provided as comma-separated string
+          const depts = requesterDepartment.split(',').map(d => d.trim().toLowerCase());
+          params.push(depts);
+          filterQuery += ` AND LOWER(department) = ANY($${params.length})`;
+        }
       } else {
         // Standard user or other - ideally they shouldn't call this, but let's be safe
         params.push(req.query.username || ''); // Fallback to self

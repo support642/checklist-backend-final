@@ -335,6 +335,7 @@ export const getMaintenanceHistory = async (req, res) => {
                 COALESCE(mp.machine_area, t.part_area) as part_area,
                 t.duration, t.planned_date::text as planned_date, t.created_at::text as created_at,
                 t.machine_part_id, t.machine_department, t.machine_division, t.submitted_by,
+                t.approved_by,
                 t.submission_date as raw_submission_date
             FROM maintenance_tasks t
             LEFT JOIN machine_parts mp ON t.machine_part_id = mp.id
@@ -509,13 +510,18 @@ export const adminDoneMaintenance = async (req, res) => {
         const sql = `
       UPDATE maintenance_tasks
       SET admin_done = 'true',
-          admin_remark = $2
+          admin_remark = $2,
+          approved_by = $3
       WHERE id = $1
     `;
 
         for (const item of items) {
-            // item must have task_id
-            await client.query(sql, [item.task_id, item.remarks || ""]);
+            // item must have task_id, optional remarks, optional approvedBy
+            await client.query(sql, [
+                item.task_id,
+                item.remarks || "",
+                item.approvedBy || null
+            ]);
         }
 
         await client.query("COMMIT");

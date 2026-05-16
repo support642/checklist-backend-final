@@ -353,7 +353,8 @@ export const getChecklistHistory = async (req, res) => {
         admin_done_remarks,
         unit,
         division,
-        submitted_by
+        submitted_by,
+        approved_by
       FROM checklist
       WHERE ${where}
       ORDER BY submission_date DESC
@@ -523,13 +524,18 @@ export const adminDoneChecklist = async (req, res) => {
     const sql = `
       UPDATE checklist
       SET admin_done = 'Done',
-          admin_done_remarks = $2
+          admin_done_remarks = $2,
+          approved_by = $3
       WHERE task_id = $1
     `;
 
     for (const item of items) {
-      // item must have task_id, optional remarks
-      await client.query(sql, [item.task_id, item.remarks || null]);
+      // item must have task_id, optional remarks, optional approvedBy
+      await client.query(sql, [
+        item.task_id,
+        item.remarks || null,
+        item.approvedBy || null
+      ]);
     }
 
     await client.query("COMMIT");
@@ -691,7 +697,7 @@ export const bulkDeleteChecklist = async (req, res) => {
     //    - If User: Set to 'Activation_Pending' (Requesting Day On)
     // 2. If currently NULL (or anything else):
     //    - Set to 'Inactive' (Day Off)
-    
+
     const query = `
       UPDATE checklist 
       SET status = CASE 
@@ -704,8 +710,8 @@ export const bulkDeleteChecklist = async (req, res) => {
     const { rowCount } = await client.query(query, [taskIds, isAdmin]);
     await client.query("COMMIT");
 
-    const message = isAdmin 
-      ? `Successfully updated ${rowCount} tasks.` 
+    const message = isAdmin
+      ? `Successfully updated ${rowCount} tasks.`
       : `Requested activation for tasks. Status set to Pending Activation.`;
 
     res.json({ message, updatedCount: rowCount });

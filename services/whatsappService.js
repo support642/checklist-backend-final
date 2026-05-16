@@ -547,7 +547,7 @@ export const sendTaskTransferNotification = async (phoneNumber, taskDetails) => 
  * @param {string} updateType - Type of update ('done', 'partial_done', 'extend')
  */
 export const sendDelegationStatusUpdateNotification = async (phoneNumber, taskDetails, updateType) => {
-  const { name, task_id, task_description, next_extend_date, reason, division, department } = taskDetails;
+  const { name, task_id, task_description, remarks, division, department } = taskDetails;
 
   const config = await getWhatsAppDynamicConfig();
   const template = config.templates.delegation;
@@ -560,7 +560,7 @@ export const sendDelegationStatusUpdateNotification = async (phoneNumber, taskDe
 
   /**
    * EXPECTED META STRUCTURE [delegation_status_v2]:
-   * Params: 1.StatusHeader, 2.User, 3.ID, 4.Division, 5.Dept, 6.Desc, 7.Remarks, 8.Status, 9.Link
+   * Params: 1.StatusHeader, 2.User, 3.Desc, 4.Remarks, 5.Status, 6.Division, 7.Dept, 8.ID, 9.Link
    */
   const components = [
     {
@@ -569,7 +569,7 @@ export const sendDelegationStatusUpdateNotification = async (phoneNumber, taskDe
         { type: "text", text: statusText.toUpperCase() },
         { type: "text", text: name || 'N/A' },
         { type: "text", text: task_description || 'N/A' },
-        { type: "text", text: reason || 'N/A' },
+        { type: "text", text: remarks || 'N/A' },
         { type: "text", text: statusText },
         { type: "text", text: division || 'N/A' },
         { type: "text", text: department || 'N/A' },
@@ -668,7 +668,7 @@ export const sendTaskOverdueSummaryNotification = async (phoneNumber, userName, 
   // WhatsApp has a limit on parameter length (~1024 chars), so we truncate if needed
   let summaryText = '';
   tasks.forEach((t, index) => {
-    const line = `• #${t.taskId}: ${t.description?.substring(0, 40) || 'N/A'} (Due: ${formatDate(t.dueDate)})\n`;
+    const line = `• #${t.taskId}: ${t.description?.substring(0, 40) || 'N/A'} (Due: ${formatDate(t.dueDate)}) `;
     if ((summaryText + line).length < 900) { // Keep buffer for safety
       summaryText += line;
     }
@@ -731,17 +731,11 @@ export const sendDelegationCompletionToAdmin = async (phoneNumber, taskDetails) 
 };
 
 /**
- * Send daily management summary report
+ * [OLD VERSION] Send daily management summary report
+ * Commented out to migrate to new 16-parameter template.
  */
+/*
 export const sendDailyManagementSummary = async (phoneNumber, stats) => {
-  /**
-   * EXPECTED META STRUCTURE [daily_management_summary]:
-   * Params: 
-   * 1.Period
-   * Checklist: 2.Total, 3.Done, 4.Pend, 5.Over
-   * Delegation: 6.Total, 7.Done, 8.Pend, 9.Over
-   * Maintenance: 10.Total, 11.Done, 12.Pend, 13.Over
-   */
   const components = [
     {
       type: "body",
@@ -764,6 +758,28 @@ export const sendDailyManagementSummary = async (phoneNumber, stats) => {
   ];
 
   return await sendWhatsAppTemplate(phoneNumber, 'daily_management_summary', components, 'en');
+};
+*/
+
+/**
+ * Send daily management summary report (Updated 16-parameter version)
+ * Expects stats: { period, checklist, delegation, maintenance }
+ * Each module stats should have: { total, done, pending, overdue, onTimeScore }
+ */
+export const sendDailyManagementSummary = async (phoneNumber, stats) => {
+  const components = [
+    {
+      type: "body",
+      parameters: [
+        { type: "text", text: stats.period },          // {{1}}
+        { type: "text", text: stats.checklistStr },    // {{2}}
+        { type: "text", text: stats.delegationStr },   // {{3}}
+        { type: "text", text: stats.maintenanceStr }   // {{4}}
+      ]
+    }
+  ];
+
+  return await sendWhatsAppTemplate(phoneNumber, 'daily_summary_v2', components, 'en');
 };
 
 export default {

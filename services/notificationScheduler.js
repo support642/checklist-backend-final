@@ -134,7 +134,8 @@ export const processManagementSummary = async () => {
         COUNT(*)::int                                                                       AS total,
         COUNT(CASE WHEN status = 'yes' AND submission_date IS NOT NULL THEN 1 END)::int    AS done,
         COUNT(CASE WHEN submission_date IS NULL AND task_start_date::date >= CURRENT_DATE THEN 1 END)::int AS pending,
-        COUNT(CASE WHEN submission_date IS NULL AND task_start_date::date <  CURRENT_DATE THEN 1 END)::int AS overdue
+        COUNT(CASE WHEN submission_date IS NULL AND task_start_date::date <  CURRENT_DATE THEN 1 END)::int AS overdue,
+        COUNT(CASE WHEN status = 'yes' AND submission_date IS NOT NULL AND delay <= interval '0' THEN 1 END)::int AS on_time
       FROM checklist
       WHERE task_start_date::date >= $1
         AND task_start_date::date <= $2
@@ -151,13 +152,14 @@ export const processManagementSummary = async () => {
       SELECT
         COUNT(*)::int AS total,
         COUNT(CASE WHEN submission_date IS NOT NULL THEN 1 END)::int AS done,
-        COUNT(CASE WHEN planned_date::date = CURRENT_DATE AND submission_date IS NULL THEN 1 END)::int AS pending,
-        COUNT(CASE WHEN planned_date::date < CURRENT_DATE AND submission_date IS NULL THEN 1 END)::int AS overdue
+        COUNT(CASE WHEN submission_date IS NULL AND planned_date::date >= CURRENT_DATE THEN 1 END)::int AS pending,
+        COUNT(CASE WHEN submission_date IS NULL AND planned_date::date <  CURRENT_DATE THEN 1 END)::int AS overdue,
+        COUNT(CASE WHEN submission_date IS NOT NULL AND (color_code_for = '1' OR color_code_for = 1) THEN 1 END)::int AS on_time
       FROM delegation
       WHERE (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive'))
         AND (
           (planned_date::date >= $1 AND planned_date::date <= $2)
-          OR (submission_date IS NOT NULL)
+          OR (submission_date IS NOT NULL AND submission_date::date >= $1 AND submission_date::date <= $2)
         )
     `;
 
@@ -165,20 +167,18 @@ export const processManagementSummary = async () => {
     // Same as checklist logic (uses task_start_date, submission_date, no status='yes' check)
     // Done    = submission_date IS NOT NULL (within date range)
     const maintenanceStatsQuery = `
-      SELECT 
-        done, pending, overdue, (done + pending + overdue) AS total
-      FROM (
-        SELECT
-          COUNT(CASE WHEN (submission_date::date >= $1 AND submission_date::date <= $2) THEN 1 END)::int AS done,
-          COUNT(CASE WHEN (submission_date IS NULL AND task_start_date::date = CURRENT_DATE) THEN 1 END)::int AS pending,
-          COUNT(CASE WHEN (submission_date IS NULL AND task_start_date::date < CURRENT_DATE AND task_start_date::date <= $2) THEN 1 END)::int AS overdue
-        FROM maintenance_tasks
-        WHERE (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive'))
-          AND (
-            (submission_date IS NULL AND task_start_date::date <= $2)
-            OR (submission_date::date >= $1 AND submission_date::date <= $2)
-          )
-      ) AS counts
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(CASE WHEN submission_date IS NOT NULL THEN 1 END)::int AS done,
+        COUNT(CASE WHEN submission_date IS NULL AND task_start_date::date >= CURRENT_DATE THEN 1 END)::int AS pending,
+        COUNT(CASE WHEN submission_date IS NULL AND task_start_date::date <  CURRENT_DATE THEN 1 END)::int AS overdue,
+        COUNT(CASE WHEN submission_date IS NOT NULL AND (submission_date::date <= task_start_date::date) THEN 1 END)::int AS on_time
+      FROM maintenance_tasks
+      WHERE (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive'))
+        AND (
+          (task_start_date::date >= $1 AND task_start_date::date <= $2)
+          OR (submission_date IS NOT NULL AND submission_date::date >= $1 AND submission_date::date <= $2)
+        )
     `;
 
     const dateParams = [firstDayStr, todayStr];
@@ -189,17 +189,34 @@ export const processManagementSummary = async () => {
       pool.query(maintenanceStatsQuery, dateParams)
     ]);
 
-    const periodStr = `01/${pad(now.getMonth() + 1)}/${now.getFullYear()} to ${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+    const shortYear = String(now.getFullYear()).slice(-2);
+    const periodStr = `1/${now.getMonth() + 1}/${shortYear} to ${now.getDate()}/${now.getMonth() + 1}/${shortYear}`;
+
+    // Helper to calculate on-time score
+    const getOnTimeScore = (stats) => {
+      const { done, on_time } = stats;
+      return done > 0 ? Math.round((on_time / done) * 100) : 0;
+    };
+
+    // Helper to format category string
+    const formatCategoryStats = (stats) => {
+      const score = getOnTimeScore(stats);
+      return `📊 Total: ${stats.total || 0} | 🟢 Done: ${stats.done || 0} | 🟡 Pend: ${stats.pending || 0} | 🔴 Over: ${stats.overdue || 0} | *🟣 Score: ${score}%*`;
+    };
+
+    const checklistData = checklistRes.rows[0];
+    const delegationData = delegationRes.rows[0];
+    const maintenanceData = maintenanceRes.rows[0];
 
     const reportStats = {
       period: periodStr,
-      checklist: checklistRes.rows[0],
-      delegation: delegationRes.rows[0],
-      maintenance: maintenanceRes.rows[0]
+      checklistStr: formatCategoryStats(checklistData),
+      delegationStr: formatCategoryStats(delegationData),
+      maintenanceStr: formatCategoryStats(maintenanceData)
     };
 
     // 2. Management recipient numbers (Hardcoded as requested)
-    const recipientNumbers = ["917772999905"];
+    const recipientNumbers = ["917772999905", "919764560196"];
 
     if (recipientNumbers.length === 0) {
       console.warn('⚠️ [Scheduler] No valid management numbers found in .env (MANAGEMENT_NUMBERS).');
