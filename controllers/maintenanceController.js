@@ -103,6 +103,15 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         else if (username) {
             where += ` AND LOWER(t.name) = LOWER($${queryParams.length + 1}) `;
             queryParams.push(username);
+
+            if (requesterDivision) {
+                where += ` AND LOWER(t.division) = LOWER($${queryParams.length + 1}) `;
+                queryParams.push(requesterDivision);
+            }
+            if (department) {
+                where += ` AND LOWER(t.department) = LOWER($${queryParams.length + 1}) `;
+                queryParams.push(department);
+            }
         }
 
         if (search.trim()) {
@@ -260,6 +269,13 @@ export const getMaintenanceHistory = async (req, res) => {
             }
         } else if (username) {
             addFilter(`LOWER(t.name) = LOWER(?)`, username);
+
+            if (requesterDivision) {
+                addFilter(`LOWER(t.division) = LOWER(?)`, requesterDivision);
+            }
+            if (department) {
+                addFilter(`LOWER(t.department) = LOWER(?)`, department);
+            }
         }
 
         // ⭐ UI Filters
@@ -604,6 +620,15 @@ export const getUniqueMaintenanceTasks = async (req, res) => {
         } else if (upRole === "USER" && userName) {
             whereClause += ` AND LOWER(t.name) = LOWER($${paramIndex++})`;
             params.push(userName);
+
+            if (userDiv) {
+                whereClause += ` AND LOWER(t.division) = LOWER($${paramIndex++})`;
+                params.push(userDiv);
+            }
+            if (userDept) {
+                whereClause += ` AND LOWER(t.department) = LOWER($${paramIndex++})`;
+                params.push(userDept);
+            }
         }
 
         // ⭐ Database-level search filter

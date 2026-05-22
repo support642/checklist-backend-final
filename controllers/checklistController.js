@@ -92,6 +92,15 @@ export const getPendingChecklist = async (req, res) => {
       // Normal users only see their own tasks
       where += ` AND LOWER(name) = LOWER($${queryParams.length + 1}) `;
       queryParams.push(username);
+
+      if (requesterDivision) {
+        where += ` AND LOWER(division) = LOWER($${queryParams.length + 1}) `;
+        queryParams.push(requesterDivision);
+      }
+      if (requesterDepartment) {
+        where += ` AND LOWER(department) = LOWER($${queryParams.length + 1}) `;
+        queryParams.push(requesterDepartment);
+      }
     }
 
     if (search.trim()) {
@@ -264,6 +273,13 @@ export const getChecklistHistory = async (req, res) => {
       }
     } else if (username) {
       addFilter(`LOWER(name) = LOWER(?)`, username);
+      
+      if (requesterDivision) {
+        addFilter(`LOWER(division) = LOWER(?)`, requesterDivision);
+      }
+      if (department) {
+        addFilter(`LOWER(department) = LOWER(?)`, department);
+      }
     }
 
     // Explicit UI Filters

@@ -887,6 +887,14 @@ export const getChecklistStatsByDate = async (req, res) => {
     } else {
       query += ` AND LOWER(name)=LOWER($${idx++})`;
       params.push(username);
+      if (requesterDivision) {
+        query += ` AND LOWER(division)=LOWER($${idx++})`;
+        params.push(requesterDivision);
+      }
+      if (requesterDepartment) {
+        query += ` AND LOWER(department)=LOWER($${idx++})`;
+        params.push(requesterDepartment);
+      }
     }
 
     const result = await pool.query(query, params);
@@ -981,6 +989,8 @@ export const getStaffTaskSummary = async (req, res) => {
       }
     } else {
       query += ` AND LOWER(t.name)=LOWER('${username}')`;
+      if (requesterDivision) query += ` AND LOWER(t.division)=LOWER('${requesterDivision.replace(/'/g, "''")}')`;
+      if (requesterDepartment) query += ` AND LOWER(t.department)=LOWER('${requesterDepartment.replace(/'/g, "''")}')`;
     }
 
     query += `
@@ -1057,6 +1067,8 @@ export const getDashboardDataCount = async (req, res) => {
       if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter.replace(/'/g, "''")}')`;
     } else {
       query += ` AND LOWER(name)=LOWER('${username?.replace(/'/g, "''")}')`;
+      if (requesterDivision) query += ` AND LOWER(division)=LOWER('${requesterDivision.replace(/'/g, "''")}')`;
+      if (requesterDepartment) query += ` AND LOWER(department)=LOWER('${requesterDepartment.replace(/'/g, "''")}')`;
     }
 
     // TASK VIEW LOGIC
@@ -1143,6 +1155,16 @@ export const getChecklistDateRangeCount = async (req, res) => {
     if (role === "user" && username) {
       query += ` AND LOWER(name) = LOWER($${idx++})`;
       params.push(username);
+      const requesterDivision = req.query.division;
+      const requesterDepartment = req.query.department;
+      if (requesterDivision) {
+        query += ` AND LOWER(division) = LOWER($${idx++})`;
+        params.push(requesterDivision);
+      }
+      if (requesterDepartment) {
+        query += ` AND LOWER(department) = LOWER($${idx++})`;
+        params.push(requesterDepartment);
+      }
     }
 
     // ADMIN STAFF FILTER

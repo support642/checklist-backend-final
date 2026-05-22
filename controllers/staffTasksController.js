@@ -435,6 +435,17 @@ export const getStaffDetails = async (req, res) => {
       query += ` AND LOWER(u.unit) = LOWER($${paramCount}) AND LOWER(u.division) = LOWER($${paramCount + 1}) AND LOWER(u.department) = LOWER($${paramCount + 2})`;
       params.push(unit, division, department);
       paramCount += 3;
+    } else if (userRole === "USER" && username) {
+      if (division) {
+        query += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+        params.push(division);
+        paramCount++;
+      }
+      if (department) {
+        query += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+        params.push(department);
+        paramCount++;
+      }
     }
 
     // REMOVE redundant block or keep it for legacy? The above code already handles monthYear for details.
