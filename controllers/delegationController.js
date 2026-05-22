@@ -36,14 +36,14 @@ export const fetchDelegationDataSortByDate = async (req, res) => {
     } else if (upRole === "ADMIN") {
       query = `SELECT * FROM delegation WHERE LOWER(division)=LOWER($1) AND LOWER(department)=LOWER($2) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
     } else {
-      query = `SELECT * FROM delegation WHERE name = $1 AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
+      query = `SELECT * FROM delegation WHERE LOWER(name) = LOWER($1) AND LOWER(division) = LOWER($2) AND LOWER(department) = LOWER($3) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
     }
 
     let params_val = [];
     if (upRole === "DIV_ADMIN") params_val = [requesterDivision];
     else if (upRole === "ADMIN") params_val = [requesterDivision, requesterDepartment];
     else if (upRole === "SUPER_ADMIN") params_val = [];
-    else params_val = [username || ""];
+    else params_val = [username || "", requesterDivision || "", requesterDepartment || ""];
 
     const { rows } = await pool.query(query, params_val);
     return res.json(rows);
@@ -101,7 +101,9 @@ export const fetchDelegation_DoneDataSortByDate = async (req, res) => {
       addFilter(`LOWER(d.division) = LOWER(?)`, requesterDivision);
       addFilter(`LOWER(d.department) = LOWER(?)`, requesterDepartment || userAccess);
     } else {
-      addFilter(`dd.name = ?`, username);
+      addFilter(`LOWER(dd.name) = LOWER(?)`, username);
+      addFilter(`LOWER(d.division) = LOWER(?)`, requesterDivision || "");
+      addFilter(`LOWER(d.department) = LOWER(?)`, requesterDepartment || "");
     }
 
     // Explicit UI Filters

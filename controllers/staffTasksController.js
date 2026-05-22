@@ -52,7 +52,7 @@ export const getStaffTasks = async (req, res) => {
       staffQuery = `
         SELECT DISTINCT t.name, u.department, u.division, u.employee_id, u.designation
         FROM ${table} t
-        LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
+        LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
         WHERE t.name IS NOT NULL
         AND t.name != ''
         AND t.${dateCol} IS NOT NULL
@@ -63,7 +63,7 @@ export const getStaffTasks = async (req, res) => {
       staffQuery = `
         SELECT DISTINCT t.name, u.department, u.division, u.employee_id, u.designation
         FROM ${table} t
-        JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
+        JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
         WHERE t.name IS NOT NULL
         AND t.name != ''
         AND t.${dateCol} IS NOT NULL
@@ -83,6 +83,16 @@ export const getStaffTasks = async (req, res) => {
         staffQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
         params.push(username);
         paramCount++;
+        if (division) {
+          staffQuery += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+          params.push(division);
+          paramCount++;
+        }
+        if (department) {
+          staffQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+          params.push(department);
+          paramCount++;
+        }
       }
     }
 
@@ -223,6 +233,17 @@ export const getStaffTasks = async (req, res) => {
       taskQuery += ` WHERE LOWER(name)=LOWER($${tc}) AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive'))`;
       tp.push(staffName);
       tc++;
+      
+      if (staffObj.division && staffObj.division !== "N/A") {
+        taskQuery += ` AND LOWER(division)=LOWER($${tc})`;
+        tp.push(staffObj.division);
+        tc++;
+      }
+      if (staffObj.department && staffObj.department !== "N/A") {
+        taskQuery += ` AND LOWER(department)=LOWER($${tc})`;
+        tp.push(staffObj.department);
+        tc++;
+      }
 
       // Task data filter hierarchy
       if (queryStartDate && queryEndDate) {
@@ -313,7 +334,9 @@ export const getStaffDetails = async (req, res) => {
       division = "",
       department = "",
       startDate: queryStartDate = "",
-      endDate: queryEndDate = ""
+      endDate: queryEndDate = "",
+      targetDivision = "",
+      targetDepartment = ""
     } = req.query;
 
     if (!staffName) {
@@ -352,13 +375,24 @@ export const getStaffDetails = async (req, res) => {
         CASE WHEN t.created_at IS NOT NULL THEN to_char(t.created_at::timestamp, 'YYYY-MM-DD') ELSE '—' END as end_date,
         CASE WHEN t.submission_date IS NOT NULL THEN to_char(t.submission_date::timestamp, 'YYYY-MM-DD') ELSE '—' END as submission_date
       FROM ${table} t
-      LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
+      LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
       WHERE TRIM(LOWER(t.name)) = TRIM(LOWER($1))
       AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
     `;
 
     const params = [staffName];
     let paramCount = 2;
+
+    if (targetDivision) {
+      query += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+      params.push(targetDivision);
+      paramCount++;
+    }
+    if (targetDepartment) {
+      query += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+      params.push(targetDepartment);
+      paramCount++;
+    }
 
     // Staff Detail Detail Filter Hierarchy
     if (queryStartDate && queryEndDate) {
@@ -451,7 +485,7 @@ export const getStaffCount = async (req, res) => {
       query = `
         SELECT DISTINCT t.name 
         FROM ${table} t
-        LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
+        LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
         WHERE t.name IS NOT NULL 
         AND t.name != ''
         AND t.${dateCol} IS NOT NULL
@@ -461,7 +495,7 @@ export const getStaffCount = async (req, res) => {
       query = `
         SELECT DISTINCT t.name 
         FROM ${table} t
-        JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name))
+        JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
         WHERE t.name IS NOT NULL 
         AND t.name != ''
         AND t.${dateCol} IS NOT NULL
@@ -480,6 +514,16 @@ export const getStaffCount = async (req, res) => {
         query += ` AND LOWER(t.name) = LOWER($${pc})`;
         paramsCount.push(username);
         pc++;
+        if (division) {
+          query += ` AND LOWER(t.division) = LOWER($${pc})`;
+          paramsCount.push(division);
+          pc++;
+        }
+        if (department) {
+          query += ` AND LOWER(t.department) = LOWER($${pc})`;
+          paramsCount.push(department);
+          pc++;
+        }
       }
     }
 

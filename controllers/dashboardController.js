@@ -126,6 +126,8 @@ export const getDashboardData = async (req, res) => {
       }
     } else if (username) {
       query += ` AND LOWER(${table}.name) = LOWER('${username}')`;
+      if (requesterDivision) query += ` AND LOWER(${table}.division) = LOWER('${requesterDivision.replace(/'/g, "''")}')`;
+      if (requesterDepartment) query += ` AND LOWER(${table}.department) = LOWER('${requesterDepartment.replace(/'/g, "''")}')`;
     }
 
     // Manual overrides from UI (if permitted)
@@ -307,6 +309,8 @@ export const getTotalTask = async (req, res) => {
       if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter.replace(/'/g, "''")}')`;
     } else {
       query += ` AND LOWER(name)=LOWER('${username}')`;
+      if (requesterDivision) query += ` AND LOWER(division)=LOWER('${requesterDivision.replace(/'/g, "''")}')`;
+      if (requesterDepartment) query += ` AND LOWER(department)=LOWER('${requesterDepartment.replace(/'/g, "''")}')`;
     }
 
     const result = await pool.query(query);
@@ -382,6 +386,8 @@ export const getCompletedTask = async (req, res) => {
       if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter.replace(/'/g, "''")}')`;
     } else {
       query += ` AND LOWER(name)=LOWER('${username}')`;
+      if (requesterDivision) query += ` AND LOWER(division)=LOWER('${requesterDivision.replace(/'/g, "''")}')`;
+      if (requesterDepartment) query += ` AND LOWER(department)=LOWER('${requesterDepartment.replace(/'/g, "''")}')`;
     }
 
     const result = await pool.query(query);
@@ -489,6 +495,8 @@ export const getPendingTask = async (req, res) => {
       if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter.replace(/'/g, "''")}')`;
     } else {
       query += ` AND LOWER(name)=LOWER('${username}')`;
+      if (requesterDivision) query += ` AND LOWER(division)=LOWER('${requesterDivision.replace(/'/g, "''")}')`;
+      if (requesterDepartment) query += ` AND LOWER(department)=LOWER('${requesterDepartment.replace(/'/g, "''")}')`;
     }
 
     const result = await pool.query(query);
@@ -561,7 +569,9 @@ export const getNotDoneTask = async (req, res) => {
       }
       if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter.replace(/'/g, "''")}')`;
     } else {
-      query += ` AND name='${username}'`;
+      query += ` AND LOWER(name)=LOWER('${username}')`;
+      if (requesterDivision) query += ` AND LOWER(division)=LOWER('${requesterDivision.replace(/'/g, "''")}')`;
+      if (requesterDepartment) query += ` AND LOWER(department)=LOWER('${requesterDepartment.replace(/'/g, "''")}')`;
     }
 
     const result = await pool.query(query);
@@ -636,6 +646,8 @@ export const getOverdueTask = async (req, res) => {
       if (staffFilter && staffFilter !== "all") query += ` AND LOWER(name)=LOWER('${staffFilter.replace(/'/g, "''")}')`;
     } else {
       query += ` AND LOWER(name)=LOWER('${username}')`;
+      if (requesterDivision) query += ` AND LOWER(division)=LOWER('${requesterDivision.replace(/'/g, "''")}')`;
+      if (requesterDepartment) query += ` AND LOWER(department)=LOWER('${requesterDepartment.replace(/'/g, "''")}')`;
     }
 
     const result = await pool.query(query);
@@ -779,6 +791,14 @@ export const getChecklistByDateRange = async (req, res) => {
     } else {
       query += ` AND LOWER(checklist.name)=LOWER($${idx++})`;
       params.push(username);
+      if (requesterDivision) {
+        query += ` AND LOWER(checklist.division)=LOWER($${idx++})`;
+        params.push(requesterDivision);
+      }
+      if (requesterDepartment) {
+        query += ` AND LOWER(checklist.department)=LOWER($${idx++})`;
+        params.push(requesterDepartment);
+      }
     }
 
     // Use the original timestamp column for sorting

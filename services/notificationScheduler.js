@@ -201,7 +201,7 @@ export const processManagementSummary = async () => {
     // Helper to format category string
     const formatCategoryStats = (stats) => {
       const score = getOnTimeScore(stats);
-      return `📊 Total: ${stats.total || 0} | 🟢 Done: ${stats.done || 0} | 🟡 Pend: ${stats.pending || 0} | 🔴 Over: ${stats.overdue || 0} | *🟣 Score: ${score}%*`;
+      return `📊 Total: ${stats.total || 0} | ✅ Done: ${stats.done || 0} | ⏳ Pend: ${stats.pending || 0} | ❌ Over: ${stats.overdue || 0} | 🟣 Score: ${score}%`;
     };
 
     const checklistData = checklistRes.rows[0];
