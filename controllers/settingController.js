@@ -243,7 +243,7 @@ export const updateUser = async (req, res) => {
     const query = `
       UPDATE users SET
         user_name = $1,
-        password = $2,
+        password = COALESCE($2, password),
         email_id = $3,
         number = $4,
         employee_id = $5,
