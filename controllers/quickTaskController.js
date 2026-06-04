@@ -106,12 +106,12 @@ export const fetchDelegation = async (
   pageSize = 50,
   nameFilter = "",
   freqFilter = "",
-  startDate,
-  endDate,
   userRole = "",
   userDept = "",
   userDiv = "",
   userName = "",
+  deptFilter = "",
+  divFilter = "",
   search = ""
 ) => {
   try {
@@ -119,17 +119,6 @@ export const fetchDelegation = async (
     const filters = ["submission_date IS NULL"];
     const params = [];
     let paramIndex = 1;
-
-    const hasDateRange = startDate && endDate;
-    if (hasDateRange) {
-      filters.push(`task_start_date >= $${paramIndex++}`);
-      params.push(`${startDate} 00:00:00`);
-      filters.push(`task_start_date <= $${paramIndex++}`);
-      params.push(`${endDate} 23:59:59`);
-    } else {
-      // Default to today's tasks when no explicit range is provided
-      filters.push("task_start_date::date = CURRENT_DATE");
-    }
 
     if (nameFilter) {
       filters.push(`LOWER(name) = LOWER($${paramIndex++})`);
@@ -139,6 +128,16 @@ export const fetchDelegation = async (
     if (freqFilter) {
       filters.push(`frequency = $${paramIndex++}`);
       params.push(freqFilter);
+    }
+
+    if (deptFilter) {
+      filters.push(`LOWER(department) = LOWER($${paramIndex++})`);
+      params.push(deptFilter);
+    }
+
+    if (divFilter) {
+      filters.push(`LOWER(division) = LOWER($${paramIndex++})`);
+      params.push(divFilter);
     }
 
     // Role-based filtering
@@ -182,7 +181,7 @@ export const fetchDelegation = async (
         TO_CHAR(planned_date::timestamp, 'YYYY-MM-DD"T"HH24:MI:SS') as planned_date
       FROM delegation
       WHERE ${whereClause}
-      ORDER BY delegation.task_start_date ASC
+      ORDER BY delegation.planned_date ASC
       LIMIT $${paramIndex++}
       OFFSET $${paramIndex}
     `;
@@ -351,7 +350,7 @@ export const getQuickTaskCounts = async (req, res) => {
         SELECT DISTINCT ON (LOWER(name), LOWER(task_description))
           name, task_description
         FROM delegation
-        WHERE ${whereClause} AND task_start_date::date = CURRENT_DATE
+        WHERE ${whereClause}
       ) AS unique_tasks
     `;
 

@@ -32,12 +32,12 @@ router.post("/delegation", async (req, res) => {
     req.body.pageSize,
     req.body.nameFilter,
     req.body.freqFilter,
-    req.body.startDate,
-    req.body.endDate,
     req.body.userRole,
     req.body.userDept,
     req.body.userDiv,
     req.body.userName,
+    req.body.deptFilter,
+    req.body.divFilter,
     req.body.search
   );
   res.json(result);
