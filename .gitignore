@@ -50,3 +50,7 @@ temp/
 
 # Misc
 package-lock.json
+
+
+*.sql
+CI_CD_PIPELINE.md
