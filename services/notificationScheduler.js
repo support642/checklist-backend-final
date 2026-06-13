@@ -216,7 +216,7 @@ export const processManagementSummary = async () => {
     };
 
     // 2. Management recipient numbers (Hardcoded as requested)
-    const recipientNumbers = ["917772999905", "919764560196"];
+    const recipientNumbers = ["917772999905", "919764560196", "919165378229"];
 
     if (recipientNumbers.length === 0) {
       console.warn('⚠️ [Scheduler] No valid management numbers found in .env (MANAGEMENT_NUMBERS).');
@@ -262,9 +262,29 @@ export const initOverdueScheduler = () => {
     processManagementSummary();
   });
 
+  // Daily Expired Leaves Cleanup: 12:00 AM every day
+  cron.schedule('0 0 * * *', async () => {
+    console.log('⏰ [Scheduler] Running daily check to clear expired leaves...');
+    try {
+      const result = await pool.query(`
+        UPDATE users 
+        SET leave_date = NULL, 
+            leave_end_date = NULL,
+            remark = NULL,
+            status = 'active'
+        WHERE leave_end_date IS NOT NULL 
+          AND leave_end_date::date < CURRENT_DATE
+      `);
+      console.log(`✅ [Scheduler] Expired leaves cleared. Rows affected: ${result.rowCount}`);
+    } catch (err) {
+      console.error('❌ [Scheduler] Failed to clear expired leaves:', err.message);
+    }
+  });
+
   console.log(`🚀 [Scheduler] Notification services initialized.`);
   console.log(`   - Overdue Reminders: ${schedulePattern}`);
   console.log(`   - Management Summary: ${summaryPattern}`);
+  console.log(`   - Daily Expired Leaves Cleanup: 0 0 * * *`);
 };
 
 export default {

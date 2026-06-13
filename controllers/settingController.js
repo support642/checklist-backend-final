@@ -59,6 +59,18 @@ function getDefaultPermissions(role) {
 export const getUsers = async (req, res) => {
   try {
     const { requesterRole, requesterUnit, requesterDivision, requesterDepartment, page = 1, limit = 50, search } = req.query;
+
+    // Auto-refresh/clear expired leaves where current date is greater than leave_end_date
+    await pool.query(`
+      UPDATE users 
+      SET leave_date = NULL, 
+          leave_end_date = NULL,
+          remark = NULL,
+          status = 'active'
+      WHERE leave_end_date IS NOT NULL 
+        AND leave_end_date::date < CURRENT_DATE
+    `);
+
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const offset = (pageNum - 1) * limitNum;

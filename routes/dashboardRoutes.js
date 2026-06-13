@@ -12,13 +12,15 @@ import {
   getNotDoneTask,
   getDashboardDataCount,
   getChecklistDateRangeCount,
-  getStaffTaskSummary
+  getStaffTaskSummary,
+  getDashboardSummaryCounts
 } from "../controllers/dashboardController.js";
 
 const router = express.Router();
 
 // MAIN FETCH
 router.get("/", getDashboardData);
+router.get("/summary-counts", getDashboardSummaryCounts);
 
 // COUNT APIs
 router.get("/total", getTotalTask);

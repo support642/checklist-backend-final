@@ -296,15 +296,20 @@ export const updateChecklistTask = async (updatedTask, originalTask) => {
 export const fetchUsers = async () => {
   try {
     const sql = `
-      SELECT DISTINCT user_name
+      SELECT DISTINCT user_name, department, division, user_access
       FROM users
       WHERE user_name IS NOT NULL AND user_name <> ''
       ORDER BY user_name
     `;
 
     const { rows } = await pool.query(sql);
-    // Return objects with user_name as expected by frontend
-    return rows.map((r) => ({ user_name: r.user_name }));
+    // Return objects with user_name, department, division, user_access as expected by frontend
+    return rows.map((r) => ({ 
+      user_name: r.user_name,
+      department: r.department,
+      division: r.division,
+      user_access: r.user_access
+    }));
   } catch (err) {
     console.log(err);
     return [];

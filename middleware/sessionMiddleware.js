@@ -14,8 +14,9 @@ export const sessionMiddleware = async (req, res, next) => {
 
   const sessionId = req.headers["x-session-id"];
 
-  if (!sessionId) {
-    return res.status(401).json({ error: "Session ID missing. Please log in.", force_logout: true });
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!sessionId || !uuidRegex.test(sessionId)) {
+    return res.status(401).json({ error: "Session ID missing or invalid. Please log in.", force_logout: true });
   }
 
   try {

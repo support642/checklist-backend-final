@@ -73,10 +73,76 @@ export const getDashboardData = async (req, res) => {
     const { table, idCol, remarkCol, adminDoneCol, adminDoneRemarksCol, imageCol, dateCol, colorCodeCol, enableReminderCol } = getMapping(dashboardType);
     const offset = (page - 1) * limit;
 
+    let onTimeClause = "false";
+    if (table === 'maintenance_tasks') {
+      onTimeClause = "(status = 'Done')";
+    } else if (table === 'checklist') {
+      onTimeClause = "(submission_date IS NOT NULL AND delay <= interval '0')";
+    } else if (table === 'delegation') {
+      onTimeClause = "(color_code_for = '1' OR color_code_for = 1)";
+    }
+
+    let fromTable = table;
+    if (table === "checklist") {
+      fromTable = `(
+        SELECT 
+          task_id,
+          name, 
+          department, 
+          division, 
+          unit,
+          submission_date::timestamp AS submission_date, 
+          status::text AS status, 
+          task_start_date::timestamp AS task_start_date,
+          given_by,
+          task_description,
+          frequency,
+          created_at::timestamp AS created_at,
+          delay,
+          require_attachment::text AS require_attachment,
+          enable_reminder::text AS enable_reminder,
+          admin_done::text AS admin_done,
+          admin_done_remarks,
+          image,
+          remark,
+          planned_date::timestamp AS planned_date,
+          false AS is_ledger
+        FROM checklist
+        UNION ALL
+        SELECT 
+          id AS task_id,
+          user_name AS name, 
+          department, 
+          division, 
+          unit,
+          work_datetime::timestamp AS submission_date, 
+          'yes'::text AS status, 
+          work_datetime::timestamp AS task_start_date,
+          assign_by AS given_by,
+          work_details AS task_description,
+          'DAILY' AS frequency,
+          created_at::timestamp,
+          interval '0' AS delay,
+          'no'::text AS require_attachment,
+          'yes'::text AS enable_reminder,
+          'yes'::text AS admin_done,
+          '' AS admin_done_remarks,
+          '' AS image,
+          '' AS remark,
+          work_datetime::timestamp AS planned_date,
+          true AS is_ledger
+        FROM working_date_history
+        WHERE LOWER(status) = 'completed'
+      )`;
+    }
+
+    const isLedgerCol = table === 'checklist' ? 'is_ledger' : 'false AS is_ledger';
+
     let query = `
       SELECT 
         ${idCol} as task_id,
         department,
+        division,
         given_by,
         name,
         task_description,
@@ -88,14 +154,16 @@ export const getDashboardData = async (req, res) => {
         ${imageCol} as image,
         ${adminDoneCol} as admin_done,
         delay,
+        ${onTimeClause} as is_on_time,
         ${colorCodeCol},
         CASE WHEN planned_date IS NOT NULL THEN to_char(planned_date::timestamp, 'YYYY-MM-DD HH24:MI:SS') ELSE NULL END as planned_date,
         CASE WHEN created_at IS NOT NULL THEN to_char(created_at::timestamp, 'YYYY-MM-DD HH24:MI:SS') ELSE NULL END as created_at,
         CASE WHEN task_start_date IS NOT NULL THEN to_char(task_start_date::timestamp, 'YYYY-MM-DD HH24:MI:SS') ELSE NULL END as task_start_date,
         CASE WHEN submission_date IS NOT NULL THEN to_char(submission_date::timestamp, 'YYYY-MM-DD HH24:MI:SS') ELSE NULL END as submission_date,
         ${adminDoneRemarksCol} as admin_done_remarks,
-        ${table}.${dateCol} as task_start_date_original
-      FROM ${table} 
+        ${table}.${dateCol} as task_start_date_original,
+        ${isLedgerCol}
+      FROM ${fromTable} ${table} 
       WHERE 1=1
     `;
     finalQuery = query;
@@ -167,6 +235,23 @@ export const getDashboardData = async (req, res) => {
       if (dashboardType === "checklist") {
         query += ` AND ${table}.submission_date IS NULL`;
       }
+
+      if (dashboardType !== "delegation") {
+        query += `
+          AND ${dateCol}::date <= CASE 
+            WHEN LOWER(frequency) = 'daily' THEN CURRENT_DATE + INTERVAL '1 day'
+            WHEN LOWER(frequency) = 'tertiary' THEN CURRENT_DATE + INTERVAL '2 days'
+            WHEN LOWER(frequency) = 'weekly' THEN CURRENT_DATE + INTERVAL '3 days'
+            WHEN LOWER(frequency) = 'fortnightly' THEN CURRENT_DATE + INTERVAL '4 days'
+            WHEN LOWER(frequency) = 'monthly' THEN CURRENT_DATE + INTERVAL '15 days'
+            WHEN LOWER(frequency) IN ('quarterly', 'quaterly') THEN CURRENT_DATE + INTERVAL '1 month'
+            WHEN LOWER(frequency) IN ('half-yearly', 'half yearly') THEN CURRENT_DATE + INTERVAL '3 months'
+            WHEN LOWER(frequency) = 'yearly' THEN CURRENT_DATE + INTERVAL '10 months'
+            WHEN LOWER(frequency) LIKE '%end-of%week%' THEN CURRENT_DATE + INTERVAL '7 days'
+            ELSE CURRENT_DATE + INTERVAL '1 day'
+          END
+        `;
+      }
     }
     else if (taskView === "overdue") {
       // PAST DUE + NOT COMPLETED
@@ -199,12 +284,17 @@ export const getDashboardData = async (req, res) => {
             (${dateCol} >= '${start}' AND ${dateCol} <= '${end}')
             OR 
             (${table}.submission_date IS NOT NULL)
+            OR
+            (${table}.submission_date IS NULL AND ${dateCol}::date < CURRENT_DATE)
           )
         `;
       } else {
         query += `
-          AND ${dateCol} >= '${start}'
-          AND ${dateCol} <= '${end}'
+          AND (
+            (${dateCol} >= '${start}' AND ${dateCol} <= '${end}')
+            OR
+            (${table}.submission_date IS NULL AND ${dateCol}::date < CURRENT_DATE)
+          )
         `;
       }
     }
@@ -260,9 +350,7 @@ export const getTotalTask = async (req, res) => {
       if (startDate && endDate) {
         query += ` 
           (
-            (${dateCol}::date >= '${startDate}' AND ${dateCol}::date <= '${endDate}')
-            OR 
-            (submission_date IS NOT NULL)
+            ${dateCol}::date >= '${startDate}' AND ${dateCol}::date <= '${endDate}'
           )
         `;
       } else {
@@ -355,10 +443,11 @@ export const getCompletedTask = async (req, res) => {
       // Delegation: Completed tasks (has submission date) 
       query += ` AND submission_date IS NOT NULL `;
 
-      let start = startDate || firstDayStr;
-      let end = endDate || currentDayStr;
-
-      query += ` AND (${dateCol}::date >= '${start}' AND ${dateCol}::date <= '${end}' OR submission_date IS NOT NULL)`;
+      if (startDate && endDate) {
+        query += ` AND (${dateCol}::date >= '${startDate}' AND ${dateCol}::date <= '${endDate}')`;
+      } else {
+        query += ` AND (${dateCol}::date >= '${firstDayStr}' AND ${dateCol}::date <= '${currentDayStr}' OR submission_date IS NOT NULL)`;
+      }
     }
 
     const upRole = role ? role.toUpperCase() : "USER";
@@ -468,6 +557,9 @@ export const getPendingTask = async (req, res) => {
     } else {
       // Delegation: All pending tasks (no submission date)
       query += ` AND submission_date IS NULL `;
+      if (startDate && endDate) {
+        query += ` AND ${dateCol}::date >= '${startDate}' AND ${dateCol}::date <= '${endDate}' `;
+      }
     }
 
     const upRole = role ? role.toUpperCase() : "USER";
@@ -533,6 +625,9 @@ export const getNotDoneTask = async (req, res) => {
 
     if (dashboardType === "delegation") {
       query += ` AND submission_date IS NOT NULL AND color_code_for = 2 `;
+      if (startDate && endDate) {
+        query += ` AND ${dateCol}::date >= '${startDate}' AND ${dateCol}::date <= '${endDate}' `;
+      }
     } else {
       let start = startDate || firstDayStr;
       let end = endDate || currentDayStr;
@@ -1083,6 +1178,22 @@ export const getDashboardDataCount = async (req, res) => {
         AND DATE(${dateCol}) > CURRENT_DATE
         AND submission_date IS NULL
       `;
+      if (dashboardType !== "delegation") {
+        query += `
+          AND DATE(${dateCol}) <= CASE 
+            WHEN LOWER(frequency) = 'daily' THEN CURRENT_DATE + INTERVAL '1 day'
+            WHEN LOWER(frequency) = 'tertiary' THEN CURRENT_DATE + INTERVAL '2 days'
+            WHEN LOWER(frequency) = 'weekly' THEN CURRENT_DATE + INTERVAL '3 days'
+            WHEN LOWER(frequency) = 'fortnightly' THEN CURRENT_DATE + INTERVAL '4 days'
+            WHEN LOWER(frequency) = 'monthly' THEN CURRENT_DATE + INTERVAL '15 days'
+            WHEN LOWER(frequency) IN ('quarterly', 'quaterly') THEN CURRENT_DATE + INTERVAL '1 month'
+            WHEN LOWER(frequency) IN ('half-yearly', 'half yearly') THEN CURRENT_DATE + INTERVAL '3 months'
+            WHEN LOWER(frequency) = 'yearly' THEN CURRENT_DATE + INTERVAL '10 months'
+            WHEN LOWER(frequency) LIKE '%end-of%week%' THEN CURRENT_DATE + INTERVAL '7 days'
+            ELSE CURRENT_DATE + INTERVAL '1 day'
+          END
+        `;
+      }
     }
     else if (taskView === "overdue") {
       if (startDate && endDate) {
@@ -1213,6 +1324,287 @@ export const getChecklistDateRangeCount = async (req, res) => {
   } catch (err) {
     console.error("DATE RANGE COUNT ERROR:", err.message);
     res.status(500).json({ error: "Error fetching date range count" });
+  }
+};
+
+export const getDashboardSummaryCounts = async (req, res) => {
+  try {
+    const {
+      dashboardType = "checklist",
+      staffFilter = "all",
+      departmentFilter = "all",
+      unitFilter = "all",
+      divisionFilter = "all",
+      role,
+      username,
+      startDate,
+      endDate
+    } = req.query;
+
+    const { table, dateCol } = getMapping(dashboardType);
+    const { firstDayStr, currentDayStr } = getCurrentMonthRange();
+
+    let start = startDate || firstDayStr;
+    let end = endDate || currentDayStr;
+
+    const upRole = (role || "").toUpperCase();
+    const requesterUnit = req.query.unit || "";
+    const requesterDivision = req.query.division || "";
+    const requesterDepartment = (req.query.department || "").trim();
+
+    // Build common filter SQL conditions
+    let filterQuery = "";
+    const params = [];
+    let paramCount = 1;
+
+    // Role-based restrictions
+    if (upRole === "SUPER_ADMIN") {
+      // No extra filter
+    } else if (upRole === "DIV_ADMIN") {
+      if (requesterUnit && requesterDivision) {
+        filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount}) AND LOWER(t.division) = LOWER($${paramCount + 1})`;
+        params.push(requesterUnit, requesterDivision);
+        paramCount += 2;
+      }
+    } else if (upRole === "ADMIN") {
+      if (requesterUnit && requesterDivision && requesterDepartment) {
+        if (requesterDepartment.includes(',')) {
+          const depts = requesterDepartment.split(',').map(d => d.trim().toLowerCase());
+          filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount}) AND LOWER(t.division) = LOWER($${paramCount + 1}) AND LOWER(t.department) = ANY($${paramCount + 2})`;
+          params.push(requesterUnit, requesterDivision, depts);
+          paramCount += 3;
+        } else {
+          filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount}) AND LOWER(t.division) = LOWER($${paramCount + 1}) AND LOWER(t.department) = LOWER($${paramCount + 2})`;
+          params.push(requesterUnit, requesterDivision, requesterDepartment);
+          paramCount += 3;
+        }
+      } else {
+        if (staffFilter && staffFilter !== "all") {
+          filterQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+          params.push(staffFilter);
+          paramCount++;
+        }
+        if (departmentFilter && departmentFilter !== "all") {
+          filterQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+          params.push(departmentFilter);
+          paramCount++;
+        }
+      }
+    } else if (username) {
+      filterQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+      params.push(username);
+      paramCount++;
+      if (requesterDivision) {
+        filterQuery += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+        params.push(requesterDivision);
+        paramCount++;
+      }
+      if (requesterDepartment) {
+        filterQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+        params.push(requesterDepartment);
+        paramCount++;
+      }
+    }
+
+    // Manual overrides from UI (if permitted)
+    if (upRole === "SUPER_ADMIN" || upRole === "DIV_ADMIN" || upRole === "ADMIN") {
+      if (staffFilter && staffFilter !== "all" && upRole !== "ADMIN") {
+        filterQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+        params.push(staffFilter);
+        paramCount++;
+      }
+      if (departmentFilter && departmentFilter !== "all") {
+        filterQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+        params.push(departmentFilter);
+        paramCount++;
+      }
+      if (unitFilter && unitFilter !== "all") {
+        filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount})`;
+        params.push(unitFilter);
+        paramCount++;
+      }
+      if (divisionFilter && divisionFilter !== "all") {
+        filterQuery += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+        params.push(divisionFilter);
+        paramCount++;
+      }
+    }
+
+    let query = "";
+
+    if (dashboardType === "delegation") {
+      const startIdx = paramCount;
+      const endIdx = paramCount + 1;
+      params.push(start, end);
+
+      if (startDate && endDate) {
+        query = `
+          SELECT
+            COUNT(*) AS total_tasks,
+            SUM(CASE WHEN submission_date IS NOT NULL THEN 1 ELSE 0 END) AS completed_tasks,
+            SUM(CASE WHEN submission_date IS NULL THEN 1 ELSE 0 END) AS pending_tasks,
+            SUM(CASE WHEN planned_date::date < CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS overdue_tasks,
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 2 THEN 1 ELSE 0 END) AS not_done_tasks,
+            SUM(CASE WHEN planned_date::date = CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS pending_today,
+            SUM(CASE WHEN planned_date::date > CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS pending_upcoming,
+            SUM(CASE WHEN planned_date::date < CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS pending_overdue,
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 1 THEN 1 ELSE 0 END) AS completed_rating_one,
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 2 THEN 1 ELSE 0 END) AS completed_rating_two,
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for >= 3 THEN 1 ELSE 0 END) AS completed_rating_three_plus
+          FROM delegation t
+          LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
+            AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
+            AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
+          WHERE (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
+            AND t.planned_date::date >= $${startIdx}::date
+            AND t.planned_date::date <= $${endIdx}::date
+            ${filterQuery}
+        `;
+      } else {
+        const hasDateRangeIdx = paramCount + 2;
+        params.push(false);
+        query = `
+          SELECT
+            SUM(CASE WHEN (planned_date::date >= $${startIdx} AND planned_date::date <= $${endIdx}) OR submission_date IS NOT NULL THEN 1 ELSE 0 END) AS total_tasks,
+            SUM(CASE WHEN submission_date IS NOT NULL THEN 1 ELSE 0 END) AS completed_tasks,
+            SUM(CASE WHEN submission_date IS NULL THEN 1 ELSE 0 END) AS pending_tasks,
+            SUM(CASE WHEN planned_date::date < CURRENT_DATE AND submission_date IS NULL 
+                      AND (CASE WHEN $${hasDateRangeIdx} THEN planned_date::date >= $${startIdx} AND planned_date::date <= $${endIdx} ELSE true END) THEN 1 ELSE 0 END) AS overdue_tasks,
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 2 THEN 1 ELSE 0 END) AS not_done_tasks,
+            SUM(CASE WHEN planned_date::date = CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS pending_today,
+            SUM(CASE WHEN planned_date::date > CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS pending_upcoming,
+            SUM(CASE WHEN planned_date::date < CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS pending_overdue,
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 1 THEN 1 ELSE 0 END) AS completed_rating_one,
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 2 THEN 1 ELSE 0 END) AS completed_rating_two,
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for >= 3 THEN 1 ELSE 0 END) AS completed_rating_three_plus
+          FROM delegation t
+          LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
+            AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
+            AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
+          WHERE (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
+            ${filterQuery}
+        `;
+      }
+    } else {
+      // Checklist / Maintenance: Base date filter in WHERE clause
+      let fromTable = table;
+      if (dashboardType === "checklist") {
+        fromTable = `(
+          SELECT 
+            name, 
+            department, 
+            division, 
+            unit,
+            submission_date, 
+            status, 
+            task_start_date,
+            given_by,
+            task_description,
+            frequency,
+            created_at,
+            delay
+          FROM checklist
+          UNION ALL
+          SELECT 
+            user_name AS name, 
+            department, 
+            division, 
+            unit,
+            work_datetime AS submission_date, 
+            'yes'::public.enable_reminder AS status, 
+            work_datetime AS task_start_date,
+            assign_by AS given_by,
+            work_details AS task_description,
+            'DAILY' AS frequency,
+            created_at::timestamp,
+            interval '0' AS delay
+          FROM working_date_history
+          WHERE LOWER(status) = 'completed'
+        )`;
+      }
+
+      const completedExp = dashboardType === "checklist"
+        ? "t.submission_date IS NOT NULL AND t.status = 'yes'"
+        : "t.submission_date IS NOT NULL";
+
+      const startIdx = paramCount;
+      const endIdx = paramCount + 1;
+      params.push(start, end);
+
+      const targetDateCol = "task_start_date";
+
+      query = `
+        SELECT
+          COUNT(*) AS total_tasks,
+          SUM(CASE WHEN ${completedExp} THEN 1 ELSE 0 END) AS completed_tasks,
+          SUM(CASE WHEN t.submission_date IS NULL THEN 1 ELSE 0 END) AS pending_tasks,
+          SUM(CASE WHEN t.${targetDateCol}::date < CURRENT_DATE AND t.submission_date IS NULL THEN 1 ELSE 0 END) AS overdue_tasks,
+          SUM(CASE WHEN t.submission_date IS NOT NULL AND (t.status = 'no' OR t.status IS NULL) THEN 1 ELSE 0 END) AS not_done_tasks,
+          SUM(CASE WHEN t.${targetDateCol}::date = CURRENT_DATE AND t.submission_date IS NULL THEN 1 ELSE 0 END) AS pending_today,
+          SUM(CASE 
+            WHEN t.${targetDateCol}::date > CURRENT_DATE AND t.submission_date IS NULL 
+            AND t.${targetDateCol}::date <= CASE 
+              WHEN LOWER(t.frequency) = 'daily' THEN CURRENT_DATE + INTERVAL '1 day'
+              WHEN LOWER(t.frequency) = 'tertiary' THEN CURRENT_DATE + INTERVAL '2 days'
+              WHEN LOWER(t.frequency) = 'weekly' THEN CURRENT_DATE + INTERVAL '3 days'
+              WHEN LOWER(t.frequency) = 'fortnightly' THEN CURRENT_DATE + INTERVAL '4 days'
+              WHEN LOWER(t.frequency) = 'monthly' THEN CURRENT_DATE + INTERVAL '15 days'
+              WHEN LOWER(t.frequency) IN ('quarterly', 'quaterly') THEN CURRENT_DATE + INTERVAL '1 month'
+              WHEN LOWER(t.frequency) IN ('half-yearly', 'half yearly') THEN CURRENT_DATE + INTERVAL '3 months'
+              WHEN LOWER(t.frequency) = 'yearly' THEN CURRENT_DATE + INTERVAL '10 months'
+              WHEN LOWER(t.frequency) LIKE '%end-of%week%' THEN CURRENT_DATE + INTERVAL '7 days'
+              ELSE CURRENT_DATE + INTERVAL '1 day'
+            END
+            THEN 1 ELSE 0 
+          END) AS pending_upcoming,
+          SUM(CASE WHEN t.${targetDateCol}::date < CURRENT_DATE AND t.submission_date IS NULL THEN 1 ELSE 0 END) AS pending_overdue
+        FROM ${fromTable} t
+        LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
+          AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
+          AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
+        WHERE (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
+          AND t.${targetDateCol}::date >= $${startIdx}::date
+          AND t.${targetDateCol}::date <= $${endIdx}::date
+          ${filterQuery}
+      `;
+    }
+
+    const result = await pool.query(query, params);
+    const row = result.rows[0] || {};
+
+    const totalTasks = Number(row.total_tasks || 0);
+    const completedTasks = Number(row.completed_tasks || 0);
+    const pendingTasks = Number(row.pending_tasks || 0);
+    const overdueTasks = Number(row.overdue_tasks || 0);
+    const notDoneTasks = Number(row.not_done_tasks || 0);
+    const pendingToday = Number(row.pending_today || 0);
+    const pendingUpcoming = Number(row.pending_upcoming || 0);
+    const pendingOverdue = Number(row.pending_overdue || 0);
+
+    const completedRatingOne = Number(row.completed_rating_one || 0);
+    const completedRatingTwo = Number(row.completed_rating_two || 0);
+    const completedRatingThreePlus = Number(row.completed_rating_three_plus || 0);
+
+    const completionRate = totalTasks > 0 ? Number(((completedTasks / totalTasks) * 100).toFixed(1)) : 0;
+
+    res.json({
+      totalTasks,
+      completedTasks,
+      pendingTasks,
+      overdueTasks,
+      notDoneTasks,
+      pendingToday,
+      pendingUpcoming,
+      pendingOverdue,
+      completedRatingOne,
+      completedRatingTwo,
+      completedRatingThreePlus,
+      completionRate
+    });
+
+  } catch (err) {
+    console.error("DASHBOARD SUMMARY COUNTS ERROR:", err.message);
+    res.status(500).json({ error: "Error fetching dashboard summary counts" });
   }
 };
 

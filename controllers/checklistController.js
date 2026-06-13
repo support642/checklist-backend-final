@@ -24,7 +24,18 @@ export const getPendingChecklist = async (req, res) => {
     // Base filter for pending tasks
     let where = `submission_date IS NULL`;
 
-    where += ` AND DATE(task_start_date) <= CURRENT_DATE + INTERVAL '1 day' `;
+    where += ` AND DATE(task_start_date) <= CASE 
+      WHEN LOWER(frequency) = 'daily' THEN CURRENT_DATE + INTERVAL '1 day'
+      WHEN LOWER(frequency) = 'tertiary' THEN CURRENT_DATE + INTERVAL '2 days'
+      WHEN LOWER(frequency) = 'weekly' THEN CURRENT_DATE + INTERVAL '3 days'
+      WHEN LOWER(frequency) = 'fortnightly' THEN CURRENT_DATE + INTERVAL '4 days'
+      WHEN LOWER(frequency) = 'monthly' THEN CURRENT_DATE + INTERVAL '15 days'
+      WHEN LOWER(frequency) IN ('quarterly', 'quaterly') THEN CURRENT_DATE + INTERVAL '1 month'
+      WHEN LOWER(frequency) IN ('half-yearly', 'half yearly') THEN CURRENT_DATE + INTERVAL '3 months'
+      WHEN LOWER(frequency) = 'yearly' THEN CURRENT_DATE + INTERVAL '10 months'
+      WHEN LOWER(frequency) LIKE '%end-of%week%' THEN CURRENT_DATE + INTERVAL '7 days'
+      ELSE CURRENT_DATE + INTERVAL '1 day'
+    END `;
 
     // ⭐ Status Filter (Today, Overdue, Upcoming, Leave, Day off)
     if (status === "today") {

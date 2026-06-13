@@ -27,7 +27,18 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         const queryParams = [limit, offset];
 
         // Base filter for pending tasks
-        let where = `t.submission_date IS NULL AND DATE(t.task_start_date) <= CURRENT_DATE + INTERVAL '1 day'`;
+        let where = `t.submission_date IS NULL AND DATE(t.task_start_date) <= CASE 
+            WHEN LOWER(t.frequency) = 'daily' THEN CURRENT_DATE + INTERVAL '1 day'
+            WHEN LOWER(t.frequency) = 'tertiary' THEN CURRENT_DATE + INTERVAL '2 days'
+            WHEN LOWER(t.frequency) = 'weekly' THEN CURRENT_DATE + INTERVAL '3 days'
+            WHEN LOWER(t.frequency) = 'fortnightly' THEN CURRENT_DATE + INTERVAL '4 days'
+            WHEN LOWER(t.frequency) = 'monthly' THEN CURRENT_DATE + INTERVAL '15 days'
+            WHEN LOWER(t.frequency) IN ('quarterly', 'quaterly') THEN CURRENT_DATE + INTERVAL '1 month'
+            WHEN LOWER(t.frequency) IN ('half-yearly', 'half yearly') THEN CURRENT_DATE + INTERVAL '3 months'
+            WHEN LOWER(t.frequency) = 'yearly' THEN CURRENT_DATE + INTERVAL '10 months'
+            WHEN LOWER(t.frequency) LIKE '%end-of%week%' THEN CURRENT_DATE + INTERVAL '7 days'
+            ELSE CURRENT_DATE + INTERVAL '1 day'
+        END`;
 
 
 
@@ -77,6 +88,16 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         if (unitFilter !== "all" && unitFilter !== "undefined") {
             where += ` AND LOWER(t.unit) = LOWER($${queryParams.length + 1}) `;
             queryParams.push(unitFilter);
+        }
+
+        // ⭐ Date Range Filters
+        if (startDate) {
+            where += ` AND DATE(t.task_start_date) >= $${queryParams.length + 1} `;
+            queryParams.push(startDate);
+        }
+        if (endDate) {
+            where += ` AND DATE(t.task_start_date) <= $${queryParams.length + 1} `;
+            queryParams.push(endDate);
         }
 
         const requesterUnit = req.query.unit;
@@ -248,8 +269,10 @@ export const getMaintenanceHistory = async (req, res) => {
             countParams.push(value);
         };
 
-        if (startDate && endDate) {
+        if (startDate) {
             addFilter(`t.submission_date >= ?`, startDate);
+        }
+        if (endDate) {
             addFilter(`t.submission_date <= ?`, `${endDate} 23:59:59`);
         }
 

@@ -35,9 +35,9 @@ export const getStaffTasks = async (req, res) => {
     let completedCondition = "";
 
     if (table === "checklist") {
-      completedCondition = "status = 'yes'";
+      completedCondition = "t.status = 'yes'";
     } else {
-      completedCondition = "LOWER(status) = 'yes'";
+      completedCondition = "LOWER(t.status) = 'yes'";
     }
 
     const dateCol = table === "checklist" ? "task_start_date" : "planned_date";
@@ -45,77 +45,134 @@ export const getStaffTasks = async (req, res) => {
     const params = [];
     let paramCount = 1;
 
-    let staffQuery = "";
     const userRole = (role || "").toUpperCase();
+    const joinType = (userRole === "SUPER_ADMIN" || !userRole) ? "LEFT JOIN" : "JOIN";
 
-    if (userRole === "SUPER_ADMIN" || !userRole) {
-      staffQuery = `
-        SELECT DISTINCT t.name, u.department, u.division, u.employee_id, u.designation
-        FROM ${table} t
-        LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
-        WHERE t.name IS NOT NULL
-        AND t.name != ''
-        AND t.${dateCol} IS NOT NULL
-        AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
-        AND t.${dateCol} <= NOW()
-      `;
-    } else {
-      staffQuery = `
-        SELECT DISTINCT t.name, u.department, u.division, u.employee_id, u.designation
-        FROM ${table} t
-        JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
-        WHERE t.name IS NOT NULL
-        AND t.name != ''
-        AND t.${dateCol} IS NOT NULL
-        AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
-        AND t.${dateCol} <= NOW()
-      `;
+    let fromTable = table;
+    if (table === "checklist") {
+      fromTable = `(
+        SELECT 
+          name, 
+          department, 
+          division, 
+          submission_date, 
+          status, 
+          task_start_date,
+          given_by,
+          task_description,
+          frequency,
+          created_at,
+          delay
+        FROM checklist
+        UNION ALL
+        SELECT 
+          user_name AS name, 
+          department, 
+          division, 
+          work_datetime AS submission_date, 
+          'yes'::public.enable_reminder AS status, 
+          work_datetime AS task_start_date,
+          assign_by AS given_by,
+          work_details AS task_description,
+          'DAILY' AS frequency,
+          created_at::timestamp,
+          interval '0' AS delay
+        FROM working_date_history
+        WHERE LOWER(status) = 'completed'
+      )`;
+    }
 
-      if (userRole === "DIV_ADMIN" && unit && division) {
-        staffQuery += ` AND LOWER(u.unit) = LOWER($${paramCount}) AND LOWER(u.division) = LOWER($${paramCount + 1})`;
-        params.push(unit, division);
-        paramCount += 2;
-      } else if (userRole === "ADMIN" && unit && division && department) {
-        staffQuery += ` AND LOWER(u.unit) = LOWER($${paramCount}) AND LOWER(u.division) = LOWER($${paramCount + 1}) AND LOWER(u.department) = LOWER($${paramCount + 2})`;
-        params.push(unit, division, department);
-        paramCount += 3;
-      } else if (userRole === "USER" && username) {
-        staffQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
-        params.push(username);
+    let query = `
+      SELECT 
+        t.name, 
+        COALESCE(u.department, t.department, 'N/A') AS department, 
+        COALESCE(u.division, t.division, 'N/A') AS division, 
+        u.employee_id, 
+        u.designation,
+        COUNT(t.*) AS total_tasks,
+        SUM(
+           CASE 
+             WHEN t.submission_date IS NOT NULL 
+               OR (${completedCondition})
+             THEN 1 
+             ELSE 0 
+           END
+        ) AS completed_tasks,
+        SUM(
+           CASE 
+             WHEN t.submission_date IS NULL AND COALESCE(${completedCondition}, false) = false AND t.${dateCol}::date < CURRENT_DATE
+             THEN 1 
+             ELSE 0 
+           END
+        ) AS overdue_tasks,
+        SUM(
+          CASE 
+             WHEN t.submission_date IS NOT NULL AND t.submission_date <= t.${dateCol}
+             THEN 1 
+             WHEN t.submission_date IS NULL AND ${completedCondition} AND t.${dateCol} <= NOW()
+             THEN 1
+             ELSE 0 
+          END
+        ) AS done_on_time,
+        AVG(
+          CASE 
+             WHEN t.submission_date IS NOT NULL AND t.submission_date > t.${dateCol}
+             THEN EXTRACT(EPOCH FROM (t.submission_date - t.${dateCol})) / 86400.0
+             ELSE 0
+          END
+        ) AS avg_delay_days
+      FROM ${fromTable} t
+      ${joinType} users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
+      WHERE t.name IS NOT NULL
+      AND t.name != ''
+      AND t.${dateCol} IS NOT NULL
+      AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
+    `;
+
+    if (userRole === "DIV_ADMIN" && unit && division) {
+      query += ` AND LOWER(u.unit) = LOWER($${paramCount}) AND LOWER(u.division) = LOWER($${paramCount + 1})`;
+      params.push(unit, division);
+      paramCount += 2;
+    } else if (userRole === "ADMIN" && unit && division && department) {
+      query += ` AND LOWER(u.unit) = LOWER($${paramCount}) AND LOWER(u.division) = LOWER($${paramCount + 1}) AND LOWER(u.department) = LOWER($${paramCount + 2})`;
+      params.push(unit, division, department);
+      paramCount += 3;
+    } else if (userRole === "USER" && username) {
+      query += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+      params.push(username);
+      paramCount++;
+      if (division) {
+        query += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+        params.push(division);
         paramCount++;
-        if (division) {
-          staffQuery += ` AND LOWER(t.division) = LOWER($${paramCount})`;
-          params.push(division);
-          paramCount++;
-        }
-        if (department) {
-          staffQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
-          params.push(department);
-          paramCount++;
-        }
+      }
+      if (department) {
+        query += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+        params.push(department);
+        paramCount++;
       }
     }
 
     // Add search filter if provided
     if (search) {
-      staffQuery += ` AND t.name ILIKE $${paramCount}`;
+      query += ` AND t.name ILIKE $${paramCount}`;
       params.push(`%${search}%`);
       paramCount++;
     }
 
     // Apply user-selected dropdown filters (division, department, unit)
     if (selectedDivision && selectedDivision !== 'all') {
-      staffQuery += ` AND LOWER(u.division) = LOWER($${paramCount})`;
+      query += ` AND LOWER(u.division) = LOWER($${paramCount})`;
       params.push(selectedDivision);
       paramCount++;
     }
     if (selectedDepartment && selectedDepartment !== 'all') {
-      staffQuery += ` AND LOWER(u.department) = LOWER($${paramCount})`;
+      query += ` AND LOWER(u.department) = LOWER($${paramCount})`;
       params.push(selectedDepartment);
       paramCount++;
     }
     if (selectedUnit && selectedUnit !== 'all') {
-      staffQuery += ` AND LOWER(u.unit) = LOWER($${paramCount})`;
+      query += ` AND LOWER(u.unit) = LOWER($${paramCount})`;
       params.push(selectedUnit);
       paramCount++;
     }
@@ -126,7 +183,7 @@ export const getStaffTasks = async (req, res) => {
     // 3. Optional tillDate cap (independent or fallback)
 
     if (queryStartDate && queryEndDate) {
-      staffQuery += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
+      query += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
       params.push(queryStartDate, `${queryEndDate} 23:59:59`);
       paramCount += 2;
     } else if (monthYear) {
@@ -145,150 +202,40 @@ export const getStaffTasks = async (req, res) => {
         }
       }
 
-      staffQuery += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
+      query += ` AND t.${dateCol} >= $${paramCount} AND t.${dateCol} <= $${paramCount + 1}`;
       params.push(startDate, `${calculatedEndDate} 23:59:59`);
       paramCount += 2;
     } else if (tillDate) {
-      staffQuery += ` AND t.${dateCol} <= $${paramCount}`;
+      query += ` AND t.${dateCol} <= $${paramCount}`;
       params.push(`${tillDate} 23:59:59`);
       paramCount++;
     } else {
-      staffQuery += ` AND t.${dateCol} <= NOW()`;
+      query += ` AND t.${dateCol} <= NOW()`;
     }
 
     if (staffFilter !== "all") {
-      staffQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+      query += ` AND LOWER(t.name) = LOWER($${paramCount})`;
       params.push(staffFilter);
       paramCount++;
     }
 
-    if (userRole === "SUPER_ADMIN") {
-      staffQuery += ` ORDER BY u.division ASC, u.department ASC, t.name ASC`;
-    } else {
-      staffQuery += ` ORDER BY t.name ASC`;
-    }
+    query += ` GROUP BY t.name, u.department, u.division, u.employee_id, u.designation, t.department, t.division, u.unit`;
 
-    // Server-side Pagination
-    staffQuery += ` LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
-    params.push(Number(limit), offset);
-    paramCount += 2;
+    const staffResult = await pool.query(query, params);
 
-    const staffResult = await pool.query(staffQuery, params);
-    const paginatedStaff = staffResult.rows.map(r => ({
-      name: r.name || r.t_name,
-      department: r.department || "N/A",
-      division: r.division || "N/A",
-      employee_id: r.employee_id || "—",
-      designation: r.designation || "—"
-    }));
-
-    if (paginatedStaff.length === 0) {
+    if (staffResult.rows.length === 0) {
       return res.json([]);
     }
 
-    const finalData = [];
-
-    for (let staffObj of paginatedStaff) {
-      const staffName = staffObj.name;
-      // Get task data with timing calculation
-      let taskQuery = `
-        SELECT 
-          COUNT(*) AS total,
-          SUM(
-             CASE 
-               WHEN submission_date IS NOT NULL 
-                 OR (${completedCondition})
-               THEN 1 
-               ELSE 0 
-             END
-          ) AS completed,
-          SUM(
-             CASE 
-               WHEN submission_date IS NULL AND COALESCE(${completedCondition}, false) = false AND ${dateCol}::date < CURRENT_DATE
-               THEN 1 
-               ELSE 0 
-             END
-          ) AS overdue,
-          SUM(
-            CASE 
-               WHEN submission_date IS NOT NULL AND submission_date <= ${dateCol}
-               THEN 1 
-               WHEN submission_date IS NULL AND ${completedCondition} AND ${dateCol} <= NOW()
-               THEN 1
-               ELSE 0 
-            END
-          ) AS done_on_time,
-          AVG(
-            CASE 
-               WHEN submission_date IS NOT NULL AND submission_date > ${dateCol}
-               THEN EXTRACT(EPOCH FROM (submission_date - ${dateCol})) / 86400.0 -- Delay in days
-               ELSE 0
-            END
-          ) AS avg_delay_days
-        FROM ${table}
-      `;
-      const tp = [];
-      let tc = 1;
-
-      taskQuery += ` WHERE LOWER(name)=LOWER($${tc}) AND (status IS NULL OR LOWER(status::text) NOT IN ('leave', 'inactive'))`;
-      tp.push(staffName);
-      tc++;
-      
-      if (staffObj.division && staffObj.division !== "N/A") {
-        taskQuery += ` AND LOWER(division)=LOWER($${tc})`;
-        tp.push(staffObj.division);
-        tc++;
-      }
-      if (staffObj.department && staffObj.department !== "N/A") {
-        taskQuery += ` AND LOWER(department)=LOWER($${tc})`;
-        tp.push(staffObj.department);
-        tc++;
-      }
-
-      // Task data filter hierarchy
-      if (queryStartDate && queryEndDate) {
-        taskQuery += ` AND ${dateCol} >= $${tc} AND ${dateCol} <= $${tc + 1}`;
-        tp.push(queryStartDate, `${queryEndDate} 23:59:59`);
-        tc += 2;
-      } else if (monthYear) {
-        const [year, month] = monthYear.split('-').map(Number);
-        const startOfMonth = new Date(year, month - 1, 1);
-        const endOfMonth = new Date(year, month, 0);
-
-        const startDate = formatLocalYMD(startOfMonth);
-        let calculatedEndDate = formatLocalYMD(endOfMonth);
-
-        // CAP by tillDate if provided
-        if (tillDate) {
-          const tillDateObj = new Date(tillDate);
-          if (tillDateObj < endOfMonth) {
-            calculatedEndDate = tillDate;
-          }
-        }
-
-        taskQuery += ` AND ${dateCol} >= $${tc} AND ${dateCol} <= $${tc + 1}`;
-        tp.push(startDate, `${calculatedEndDate} 23:59:59`);
-        tc += 2;
-      } else if (tillDate) {
-        taskQuery += ` AND ${dateCol} <= $${tc}`;
-        tp.push(`${tillDate} 23:59:59`);
-        tc++;
-      } else {
-        taskQuery += ` AND ${dateCol} <= NOW()`;
-      }
-
-      taskQuery += ` AND ${dateCol} IS NOT NULL`;
-
-      const taskResult = await pool.query(taskQuery, tp);
-
-      const total = Number(taskResult.rows[0].total);
-      const completed = Number(taskResult.rows[0].completed);
-      const overdue = Number(taskResult.rows[0].overdue) || 0;
-      const doneOnTime = Number(taskResult.rows[0].done_on_time) || 0;
-      const avgDelayDays = Number(taskResult.rows[0].avg_delay_days) || 0;
+    const finalData = staffResult.rows.map(row => {
+      const staffName = row.name;
+      const total = Number(row.total_tasks) || 0;
+      const completed = Number(row.completed_tasks) || 0;
+      const overdue = Number(row.overdue_tasks) || 0;
+      const doneOnTime = Number(row.done_on_time) || 0;
+      const avgDelayDays = Number(row.avg_delay_days) || 0;
       const pending = total - completed - overdue;
 
-      // Calculate on-time score as negative percentage
       let onTimeScore = 0;
       if (avgDelayDays > 0) {
         onTimeScore = -Math.min(100, Math.round(avgDelayDays * 100));
@@ -296,13 +243,13 @@ export const getStaffTasks = async (req, res) => {
         onTimeScore = 100;
       }
 
-      finalData.push({
+      return {
         id: staffName.toLowerCase().replace(/\s+/g, "-"),
         name: staffName,
-        department: staffObj.department,
-        division: staffObj.division,
-        employee_id: staffObj.employee_id,
-        designation: staffObj.designation,
+        department: row.department || "N/A",
+        division: row.division || "N/A",
+        employee_id: row.employee_id || "—",
+        designation: row.designation || "—",
         email: `${staffName.toLowerCase().replace(/\s+/g, ".")}@example.com`,
         totalTasks: total,
         completedTasks: completed,
@@ -310,10 +257,42 @@ export const getStaffTasks = async (req, res) => {
         overdueTasks: overdue,
         doneOnTime: doneOnTime,
         onTimeScore: onTimeScore
-      });
-    }
+      };
+    });
 
-    return res.json(finalData);
+    const getOnTimeScorePct = (staff) => {
+      return staff.completedTasks > 0 ? (staff.doneOnTime / staff.completedTasks) * 100 : 0;
+    };
+
+    // Sort globally by the new ranking criteria:
+    // 1. completedTasks >= 300 vs < 300
+    // 2. If completedTasks >= 300, sort by onTimePct descending, then completedTasks descending
+    // 3. If completedTasks < 300, sort by completedTasks descending, then onTimePct descending
+    finalData.sort((a, b) => {
+      const aQualified = a.completedTasks >= 300;
+      const bQualified = b.completedTasks >= 300;
+
+      if (aQualified && !bQualified) return -1;
+      if (!aQualified && bQualified) return 1;
+
+      if (aQualified && bQualified) {
+        const aPct = getOnTimeScorePct(a);
+        const bPct = getOnTimeScorePct(b);
+        if (bPct !== aPct) {
+          return bPct - aPct;
+        }
+        return b.completedTasks - a.completedTasks;
+      }
+
+      // Both < 300 tasks: sort by completedTasks descending
+      if (b.completedTasks !== a.completedTasks) {
+        return b.completedTasks - a.completedTasks;
+      }
+      return getOnTimeScorePct(b) - getOnTimeScorePct(a);
+    });
+
+    const paginatedData = finalData.slice(offset, offset + Number(limit));
+    return res.json(paginatedData);
 
   } catch (err) {
     console.error("🔥 REAL ERROR →", err);
@@ -360,6 +339,44 @@ export const getStaffDetails = async (req, res) => {
       onTimeClause = "(t.color_code_for = '1' OR t.color_code_for = 1)";
     }
 
+    let fromTable = table;
+    if (table === "checklist") {
+      fromTable = `(
+        SELECT 
+          name, 
+          department, 
+          division, 
+          submission_date, 
+          status, 
+          task_start_date,
+          given_by,
+          task_description,
+          frequency,
+          created_at,
+          delay,
+          false AS is_ledger
+        FROM checklist
+        UNION ALL
+        SELECT 
+          user_name AS name, 
+          department, 
+          division, 
+          work_datetime AS submission_date, 
+          'yes'::public.enable_reminder AS status, 
+          work_datetime AS task_start_date,
+          assign_by AS given_by,
+          work_details AS task_description,
+          'DAILY' AS frequency,
+          created_at::timestamp,
+          interval '0' AS delay,
+          true AS is_ledger
+        FROM working_date_history
+        WHERE LOWER(status) = 'completed'
+      )`;
+    }
+
+    const isLedgerCol = table === 'checklist' ? 't.is_ledger' : 'false AS is_ledger';
+
     let query = `
       SELECT 
         t.status,
@@ -373,8 +390,9 @@ export const getStaffDetails = async (req, res) => {
         ${onTimeClause} as is_on_time,
         CASE WHEN t.${dateCol} IS NOT NULL THEN to_char(t.${dateCol}::timestamp, 'YYYY-MM-DD') ELSE '—' END as start_date,
         CASE WHEN t.created_at IS NOT NULL THEN to_char(t.created_at::timestamp, 'YYYY-MM-DD') ELSE '—' END as end_date,
-        CASE WHEN t.submission_date IS NOT NULL THEN to_char(t.submission_date::timestamp, 'YYYY-MM-DD') ELSE '—' END as submission_date
-      FROM ${table} t
+        CASE WHEN t.submission_date IS NOT NULL THEN to_char(t.submission_date::timestamp, 'YYYY-MM-DD') ELSE '—' END as submission_date,
+        ${isLedgerCol}
+      FROM ${fromTable} t
       LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
       WHERE TRIM(LOWER(t.name)) = TRIM(LOWER($1))
       AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
@@ -486,6 +504,40 @@ export const getStaffCount = async (req, res) => {
     const table = dashboardType;
     const dateCol = table === "checklist" ? "task_start_date" : "planned_date";
 
+    let fromTable = table;
+    if (table === "checklist") {
+      fromTable = `(
+        SELECT 
+          name, 
+          department, 
+          division, 
+          submission_date, 
+          status, 
+          task_start_date,
+          given_by,
+          task_description,
+          frequency,
+          created_at,
+          delay
+        FROM checklist
+        UNION ALL
+        SELECT 
+          user_name AS name, 
+          department, 
+          division, 
+          work_datetime AS submission_date, 
+          'yes'::public.enable_reminder AS status, 
+          work_datetime AS task_start_date,
+          assign_by AS given_by,
+          work_details AS task_description,
+          'DAILY' AS frequency,
+          created_at::timestamp,
+          interval '0' AS delay
+        FROM working_date_history
+        WHERE LOWER(status) = 'completed'
+      )`;
+    }
+
     const paramsCount = [];
     let pc = 1;
 
@@ -495,7 +547,7 @@ export const getStaffCount = async (req, res) => {
     if (userRole === "SUPER_ADMIN" || !userRole) {
       query = `
         SELECT DISTINCT t.name 
-        FROM ${table} t
+        FROM ${fromTable} t
         LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
         WHERE t.name IS NOT NULL 
         AND t.name != ''
@@ -505,7 +557,7 @@ export const getStaffCount = async (req, res) => {
     } else {
       query = `
         SELECT DISTINCT t.name 
-        FROM ${table} t
+        FROM ${fromTable} t
         JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
         WHERE t.name IS NOT NULL 
         AND t.name != ''

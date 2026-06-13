@@ -3,7 +3,7 @@ import { uploadDocumentImage } from "../middleware/workingDateS3Upload.js";
 
 /**
  * Submit Working Date Details
- * Handles bulk submission of work rows with optional images.
+ * Handles bulk submission of work rows with optional images, status, and duration.
  */
 export const submitWorkingDate = async (req, res) => {
   const client = await pool.connect();
@@ -15,61 +15,66 @@ export const submitWorkingDate = async (req, res) => {
       return res.status(400).json({ error: "No work entries provided" });
     }
 
-    // 1. Fetch user metadata for audit snapshot
-    const userQuery = `
-      SELECT user_name, employee_id, unit, division, department 
-      FROM users 
-      WHERE user_name = $1 
-      LIMIT 1
-    `;
-    const userRes = await client.query(userQuery, [username]);
-    if (userRes.rows.length === 0) {
-      return res.status(404).json({ error: "User profile not found" });
-    }
-    const user = userRes.rows[0];
-
     await client.query("BEGIN");
 
     const results = [];
     for (const entry of entries) {
       let imageUrl = null;
 
-      // 2. Process Image if present (Base64 -> S3)
+      // 1. Determine target worker username (allow admins to submit on behalf of others)
+      const targetUser = entry.userName || username;
+
+      // 2. Fetch target user profile metadata for audit snapshot
+      const userQuery = `
+        SELECT user_name, employee_id, unit, division, department 
+        FROM users 
+        WHERE user_name = $1 
+        LIMIT 1
+      `;
+      const userRes = await client.query(userQuery, [targetUser]);
+      
+      const targetUserMeta = userRes.rows.length > 0 ? userRes.rows[0] : {
+        user_name: targetUser,
+        employee_id: 'NA',
+        unit: 'N/A',
+        division: 'N/A',
+        department: 'N/A'
+      };
+
+      // 3. Process Image if present (Base64 -> S3)
       if (entry.image_base64 && typeof entry.image_base64 === 'string' && entry.image_base64.length > 100) {
         try {
-          console.log(`📸 Processing image for user ${user.user_name}, entry: ${entry.workDetail?.substring(0, 20)}...`);
-          imageUrl = await uploadDocumentImage(entry.image_base64, `working_date_${user.employee_id || user.user_name}.png`);
+          console.log(`📸 Processing image for user ${targetUserMeta.user_name}, entry: ${entry.workDetail?.substring(0, 20)}...`);
+          imageUrl = await uploadDocumentImage(entry.image_base64, `working_date_${targetUserMeta.employee_id || targetUserMeta.user_name}.png`);
           console.log("✅ Image successfully stored at:", imageUrl);
         } catch (imgErr) {
           console.error("❌ Image Upload Error for entry:", entry.workDetail?.substring(0, 20), "Error:", imgErr.message);
-          // imageUrl remains null, but record is still saved
         }
-      } else if (entry.image_base64) {
-        console.warn("⚠️ Received image_base64 but it appeared invalid (too short or not a string)");
       }
 
-      // 3. Insert Record
+      // 4. Insert Record
       const insertQuery = `
         INSERT INTO working_date_history 
-        (work_datetime, user_name, employee_id, work_details, assign_by, image_url, unit, division, department)
-        VALUES ($1::timestamp, $2, $3, $4, $5, $6, $7, $8, $9)
+        (work_datetime, user_name, employee_id, work_details, assign_by, image_url, unit, division, department, status, duration)
+        VALUES ($1::timestamp, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING *
       `;
 
       // Combine selectedDate with entry.time to create a full ISO timestamp
-      // Ensuring the time is correctly appended for robust Postgres parsing
       const workTimestamp = `${selectedDate} ${entry.time || '00:00'}`;
 
       const insertValues = [
         workTimestamp,
-        user.user_name,
-        user.employee_id || 'NA', // Fallback to 'NA' if employee_id is missing in users table
+        targetUserMeta.user_name,
+        targetUserMeta.employee_id || 'NA',
         entry.workDetail,
         entry.assignBy || 'Self',
-        imageUrl || entry.image_url || null, // Fallback to existing URL if any
-        user.unit,
-        user.division,
-        user.department
+        imageUrl || entry.image_url || null,
+        targetUserMeta.unit,
+        targetUserMeta.division,
+        targetUserMeta.department,
+        entry.status || null,
+        entry.duration || null
       ];
 
       const { rows } = await client.query(insertQuery, insertValues);
@@ -84,8 +89,7 @@ export const submitWorkingDate = async (req, res) => {
     console.error("❌ Submit Working Date Error:", err);
     res.status(500).json({
       error: "Internal Server Error",
-      details: err.message,
-      hint: "Check if all required fields are provided and database schema matches."
+      details: err.message
     });
   }
   finally {
@@ -95,7 +99,7 @@ export const submitWorkingDate = async (req, res) => {
 
 /**
  * Get Working Date History
- * Returns different views based on role.
+ * Returns detailed entries list chronologically, respecting roles and search parameters.
  */
 export const getWorkingDateHistoryList = async (req, res) => {
   try {
@@ -108,122 +112,102 @@ export const getWorkingDateHistoryList = async (req, res) => {
     const { role, unit, division, department } = userRes.rows[0];
     const upperRole = (role || "").toUpperCase();
 
-    const { search, page = 1, limit = 10 } = req.query;
+    const { search, page = 1, limit = 10, export: exportAll, startDate, endDate, filterUser } = req.query;
     const paginationPage = parseInt(page);
     const paginationLimit = parseInt(limit);
     const offset = (paginationPage - 1) * paginationLimit;
 
     let query = "";
     let params = [];
-    let searchFilter = "";
+    let whereClauses = [];
 
+    // 1. Role-based base query filters
+    if (upperRole === "SUPER_ADMIN") {
+      // Super admin has no base filters
+    } else if (upperRole === "ADMIN" || upperRole === "DIV_ADMIN") {
+      params.push(division);
+      whereClauses.push(`LOWER(division) = LOWER($${params.length})`);
+      if (upperRole === "ADMIN") {
+        params.push(department);
+        whereClauses.push(`LOWER(department) = LOWER($${params.length})`);
+      }
+    } else {
+      // Regular User: restrict to their own records
+      params.push(username);
+      whereClauses.push(`user_name = $${params.length}`);
+    }
+
+    // 2. Add search filters
     if (search) {
       params.push(`%${search}%`);
       const searchIdx = params.length;
-      searchFilter = ` AND (user_name ILIKE $${searchIdx} OR employee_id ILIKE $${searchIdx})`;
+      if (upperRole !== "SUPER_ADMIN" && upperRole !== "ADMIN" && upperRole !== "DIV_ADMIN") {
+        // Regular user search
+        whereClauses.push(`(work_details ILIKE $${searchIdx} OR assign_by ILIKE $${searchIdx} OR status ILIKE $${searchIdx})`);
+      } else {
+        // Admin/Super Admin search
+        whereClauses.push(`(user_name ILIKE $${searchIdx} OR work_details ILIKE $${searchIdx} OR employee_id ILIKE $${searchIdx})`);
+      }
     }
 
-    if (upperRole === "SUPER_ADMIN") {
-      // Super Admin: Get distinct list of employees who have submitted work
-      const limitIdx = params.length + 1;
-      const offsetIdx = params.length + 2;
-      params.push(paginationLimit, offset);
-
-      query = `
-        SELECT 
-          user_name as name, 
-          user_name as "userName",
-          employee_id as "empId", 
-          MAX(work_datetime) as "lastActive"
-        FROM working_date_history
-        WHERE 1=1 ${searchFilter}
-        GROUP BY user_name, employee_id
-        ORDER BY "lastActive" DESC
-        LIMIT $${limitIdx} OFFSET $${offsetIdx}
-      `;
+    // 3. Add employee name filter (for Super Admin / Admin / Div Admin)
+    if (filterUser && (upperRole === "SUPER_ADMIN" || upperRole === "ADMIN" || upperRole === "DIV_ADMIN")) {
+      params.push(filterUser);
+      whereClauses.push(`user_name = $${params.length}`);
     }
-    else if (upperRole === "ADMIN" || upperRole === "DIV_ADMIN") {
-      // Admin Jurisdiction Check
-      // DIV_ADMIN: same division
-      // ADMIN: same division AND department
 
-      const divVal = division;
-      const deptVal = department;
-
-      params.push(divVal);
-      const divIdx = params.length;
-      let deptIdx = null;
-
-      if (upperRole === "ADMIN") {
-        params.push(deptVal);
-        deptIdx = params.length;
-      }
-
-      // Rebuild search filter with correct indices
-      let dynamicSearchFilter = "";
-      if (search) {
-        params.push(`%${search}%`);
-        const sIdx = params.length;
-        dynamicSearchFilter = ` AND (user_name ILIKE $${sIdx} OR employee_id ILIKE $${sIdx})`;
-      }
-
-      const limitIdx = params.length + 1;
-      const offsetIdx = params.length + 2;
-      params.push(paginationLimit, offset);
-
-      query = `
-        SELECT 
-          user_name as name, 
-          user_name as "userName",
-          employee_id as "empId", 
-          MAX(work_datetime) as "lastActive"
-        FROM working_date_history
-        WHERE LOWER(division) = LOWER($${divIdx})
-          ${upperRole === "ADMIN" ? ` AND LOWER(department) = LOWER($${deptIdx})` : ""}
-        ${dynamicSearchFilter}
-        GROUP BY user_name, employee_id
-        ORDER BY "lastActive" DESC
-        LIMIT $${limitIdx} OFFSET $${offsetIdx}
-      `;
+    // 4. Add date range filters
+    if (startDate) {
+      params.push(startDate);
+      whereClauses.push(`work_datetime::date >= $${params.length}`);
     }
-    else {
-      // Regular User: Get their own detailed history
-      params = [username];
-      let userSearchFilter = "";
-      if (search) {
-        params.push(`%${search}%`);
-        userSearchFilter = ` AND (work_details ILIKE $2 OR assign_by ILIKE $2)`;
-      }
+    if (endDate) {
+      params.push(endDate);
+      whereClauses.push(`work_datetime::date <= $${params.length}`);
+    }
 
-      const limitIdx = params.length + 1;
-      const offsetIdx = params.length + 2;
+    // Combine WHERE clause
+    const whereClauseStr = whereClauses.length > 0 ? "WHERE " + whereClauses.join(" AND ") : "";
+
+    // Count query to get total records matching filters
+    const countQuery = `SELECT COUNT(*) as count FROM working_date_history ${whereClauseStr}`;
+    const countRes = await pool.query(countQuery, params);
+    const totalCount = parseInt(countRes.rows[0]?.count || 0);
+
+    // Build main SQL query
+    let baseQuery = `
+      SELECT 
+        id, 
+        to_char(work_datetime, 'DD/MM/YYYY') as date,
+        to_char(work_datetime, 'HH24:MI') as time,
+        user_name as "userName",
+        employee_id as "empId",
+        work_details as "workDetail",
+        assign_by as "assignBy",
+        image_url as "image",
+        status,
+        duration
+      FROM working_date_history
+      ${whereClauseStr}
+      ORDER BY work_datetime DESC
+    `;
+
+    if (exportAll === "true") {
+      query = baseQuery;
+    } else {
       params.push(paginationLimit, offset);
-
-      query = `
-        SELECT 
-          id, 
-          to_char(work_datetime, 'DD/MM/YYYY') as date,
-          to_char(work_datetime, 'HH24:MI') as time,
-          work_details as "workDetail",
-          assign_by as "assignBy",
-          image_url as "image"
-        FROM working_date_history
-        WHERE user_name = $1 ${userSearchFilter}
-        ORDER BY work_datetime DESC
-        LIMIT $${limitIdx} OFFSET $${offsetIdx}
-      `;
+      query = `${baseQuery} LIMIT $${params.length - 1} OFFSET $${params.length}`;
     }
 
     const { rows } = await pool.query(query, params);
-
-    // Check if there are more results
-    const hasMore = rows.length === paginationLimit;
+    const hasMore = exportAll === "true" ? false : rows.length === paginationLimit;
 
     res.json({
       data: rows,
       hasMore,
-      page: paginationPage,
-      limit: paginationLimit
+      page: exportAll === "true" ? 1 : paginationPage,
+      limit: exportAll === "true" ? rows.length : paginationLimit,
+      totalCount
     });
 
   } catch (err) {
@@ -234,14 +218,13 @@ export const getWorkingDateHistoryList = async (req, res) => {
 
 /**
  * Get Detailed History for a Specific Employee
- * Used by Super Admin / Admin modals.
+ * Used by Super Admin / Admin modals if needed.
  */
 export const getEmployeeHistoryDetail = async (req, res) => {
   try {
     const { targetUsername } = req.params;
     const { username } = req.user;
 
-    // 1. Get Logged-in Editor details
     const editorRes = await pool.query(
       "SELECT role, unit, division, department FROM users WHERE user_name = $1",
       [username]
@@ -252,16 +235,13 @@ export const getEmployeeHistoryDetail = async (req, res) => {
     const { role, unit, division, department } = editorRes.rows[0];
     const upperRole = (role || "").toUpperCase();
 
-    // 2. Security Check: Determine if this editor can view this employee
     if (upperRole !== "SUPER_ADMIN") {
-      // Fetch target employee jurisdiction
       const targetRes = await pool.query(
         "SELECT unit, division, department FROM users WHERE user_name = $1",
         [targetUsername]
       );
 
       if (targetRes.rows.length === 0) {
-        // If employee not in users table, fallback to history snapshot
         const historyJurisdictionRes = await pool.query(
           "SELECT unit, division, department FROM working_date_history WHERE user_name = $1 LIMIT 1",
           [targetUsername]
@@ -272,22 +252,19 @@ export const getEmployeeHistoryDetail = async (req, res) => {
 
       const target = targetRes.rows[0];
 
-      // Jurisdiction Enforcement
       const isSameUnit = target.unit?.toLowerCase() === unit?.toLowerCase();
       const isSameDivision = target.division?.toLowerCase() === division?.toLowerCase();
       const isSameDepartment = target.department?.toLowerCase() === department?.toLowerCase();
 
       if (upperRole === "DIV_ADMIN") {
-        if (!isSameUnit || !isSameDivision) return res.status(403).json({ error: "Access Denied: Outsive Division" });
+        if (!isSameUnit || !isSameDivision) return res.status(403).json({ error: "Access Denied: Outside Division" });
       } else if (upperRole === "ADMIN") {
         if (!isSameUnit || !isSameDivision || !isSameDepartment) return res.status(403).json({ error: "Access Denied: Outside Department" });
       } else {
-        // Regular users can't use this endpoint at all
         return res.status(403).json({ error: "Unauthorized" });
       }
     }
 
-    // 3. Authorization Passed -> Fetch Data
     const { page = 1, limit = 10 } = req.query;
     const paginationPage = parseInt(page);
     const paginationLimit = parseInt(limit);
@@ -298,9 +275,13 @@ export const getEmployeeHistoryDetail = async (req, res) => {
         id, 
         to_char(work_datetime, 'DD/MM/YYYY') as date,
         to_char(work_datetime, 'HH24:MI') as time,
+        user_name as "userName",
+        employee_id as "empId",
         work_details as "workDetail",
         assign_by as "assignBy",
-        image_url as "image"
+        image_url as "image",
+        status,
+        duration
       FROM working_date_history
       WHERE user_name = $1
       ORDER BY work_datetime DESC
@@ -308,7 +289,6 @@ export const getEmployeeHistoryDetail = async (req, res) => {
     `;
     const { rows } = await pool.query(query, [targetUsername, paginationLimit, offset]);
     
-    // Check if more records exist
     const hasMore = rows.length === paginationLimit;
 
     res.json({
@@ -321,5 +301,203 @@ export const getEmployeeHistoryDetail = async (req, res) => {
   } catch (err) {
     console.error("Get Detail Error:", err);
     res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
+/**
+ * Update working date entry
+ */
+export const updateWorkingDate = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const { selectedDate, time, workDetail, assignBy, image_base64, image_url, status, duration, userName } = req.body;
+    const { username } = req.user; // Logged-in user
+
+    // 1. Fetch the existing entry
+    const checkQuery = `SELECT * FROM working_date_history WHERE id = $1`;
+    const checkRes = await client.query(checkQuery, [id]);
+    if (checkRes.rows.length === 0) {
+      return res.status(404).json({ error: "Entry not found" });
+    }
+    const existingEntry = checkRes.rows[0];
+
+    // 2. Fetch logged-in user role & jurisdiction
+    const userProfileQuery = `SELECT role, unit, division, department FROM users WHERE user_name = $1`;
+    const userProfileRes = await client.query(userProfileQuery, [username]);
+    if (userProfileRes.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const loggedInUser = userProfileRes.rows[0];
+    const upperRole = (loggedInUser.role || "").toUpperCase();
+
+    // 3. Permission Check
+    let isAllowed = false;
+    if (upperRole === "SUPER_ADMIN") {
+      isAllowed = true;
+    } else if (existingEntry.user_name.toLowerCase() === username.toLowerCase()) {
+      isAllowed = true;
+    } else if (upperRole === "ADMIN" || upperRole === "DIV_ADMIN") {
+      const isSameUnit = existingEntry.unit?.toLowerCase() === loggedInUser.unit?.toLowerCase();
+      const isSameDivision = existingEntry.division?.toLowerCase() === loggedInUser.division?.toLowerCase();
+      const isSameDepartment = existingEntry.department?.toLowerCase() === loggedInUser.department?.toLowerCase();
+
+      if (upperRole === "DIV_ADMIN") {
+        isAllowed = isSameDivision;
+      } else if (upperRole === "ADMIN") {
+        isAllowed = isSameDivision && isSameDepartment;
+      }
+    }
+
+    if (!isAllowed) {
+      return res.status(403).json({ error: "Access Denied: You do not have permission to update this entry." });
+    }
+
+    // 4. Process image if base64 string is provided
+    let finalImageUrl = image_url || existingEntry.image_url || null;
+    if (image_base64 && typeof image_base64 === 'string' && image_base64.length > 100) {
+      try {
+        const targetUser = userName || existingEntry.user_name;
+        const empQuery = `SELECT employee_id FROM users WHERE user_name = $1 LIMIT 1`;
+        const empRes = await client.query(empQuery, [targetUser]);
+        const targetEmpId = empRes.rows[0]?.employee_id || targetUser;
+
+        finalImageUrl = await uploadDocumentImage(image_base64, `working_date_${targetEmpId}.png`);
+      } catch (imgErr) {
+        console.error("❌ Image Update Error during edit:", imgErr.message);
+      }
+    }
+
+    // 5. Update Record
+    // Reconstruct timestamp
+    const targetDate = selectedDate || existingEntry.work_datetime.toISOString().split('T')[0];
+    const targetTime = time || existingEntry.work_datetime.toTimeString().split(' ')[0].substring(0, 5);
+    const workTimestamp = `${targetDate} ${targetTime}`;
+
+    let targetWorkerName = existingEntry.user_name;
+    let empId = existingEntry.employee_id;
+    let unit = existingEntry.unit;
+    let division = existingEntry.division;
+    let department = existingEntry.department;
+
+    if (userName && userName !== existingEntry.user_name) {
+      targetWorkerName = userName;
+      const targetUserQuery = `SELECT employee_id, unit, division, department FROM users WHERE user_name = $1 LIMIT 1`;
+      const targetUserRes = await client.query(targetUserQuery, [userName]);
+      if (targetUserRes.rows.length > 0) {
+        const targetUserObj = targetUserRes.rows[0];
+        empId = targetUserObj.employee_id || 'NA';
+        unit = targetUserObj.unit;
+        division = targetUserObj.division;
+        department = targetUserObj.department;
+      } else {
+        empId = 'NA';
+        unit = 'N/A';
+        division = 'N/A';
+        department = 'N/A';
+      }
+    }
+
+    const updateQuery = `
+      UPDATE working_date_history 
+      SET work_datetime = $1::timestamp,
+          user_name = $2,
+          employee_id = $3,
+          work_details = $4,
+          assign_by = $5,
+          image_url = $6,
+          unit = $7,
+          division = $8,
+          department = $9,
+          status = $10,
+          duration = $11
+      WHERE id = $12
+      RETURNING *
+    `;
+
+    const updateValues = [
+      workTimestamp,
+      targetWorkerName,
+      empId,
+      workDetail || existingEntry.work_details,
+      assignBy || existingEntry.assign_by,
+      finalImageUrl,
+      unit,
+      division,
+      department,
+      status !== undefined ? status : existingEntry.status,
+      duration !== undefined ? duration : existingEntry.duration,
+      id
+    ];
+
+    const { rows } = await client.query(updateQuery, updateValues);
+    res.json({ message: "Work details updated successfully", data: rows[0] });
+
+  } catch (err) {
+    console.error("❌ Update Working Date Error:", err);
+    res.status(500).json({ error: "Internal Server Error", details: err.message });
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Delete working date entry
+ */
+export const deleteWorkingDate = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const { username } = req.user; // Logged-in user
+
+    // 1. Fetch existing entry
+    const checkQuery = `SELECT * FROM working_date_history WHERE id = $1`;
+    const checkRes = await client.query(checkQuery, [id]);
+    if (checkRes.rows.length === 0) {
+      return res.status(404).json({ error: "Entry not found" });
+    }
+    const existingEntry = checkRes.rows[0];
+
+    // 2. Fetch logged-in user role & jurisdiction
+    const userProfileQuery = `SELECT role, unit, division, department FROM users WHERE user_name = $1`;
+    const userProfileRes = await client.query(userProfileQuery, [username]);
+    if (userProfileRes.rows.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    const loggedInUser = userProfileRes.rows[0];
+    const upperRole = (loggedInUser.role || "").toUpperCase();
+
+    // 3. Permission Check
+    let isAllowed = false;
+    if (upperRole === "SUPER_ADMIN") {
+      isAllowed = true;
+    } else if (existingEntry.user_name.toLowerCase() === username.toLowerCase()) {
+      isAllowed = true;
+    } else if (upperRole === "ADMIN" || upperRole === "DIV_ADMIN") {
+      const isSameUnit = existingEntry.unit?.toLowerCase() === loggedInUser.unit?.toLowerCase();
+      const isSameDivision = existingEntry.division?.toLowerCase() === loggedInUser.division?.toLowerCase();
+      const isSameDepartment = existingEntry.department?.toLowerCase() === loggedInUser.department?.toLowerCase();
+
+      if (upperRole === "DIV_ADMIN") {
+        isAllowed = isSameDivision;
+      } else if (upperRole === "ADMIN") {
+        isAllowed = isSameDivision && isSameDepartment;
+      }
+    }
+
+    if (!isAllowed) {
+      return res.status(403).json({ error: "Access Denied: You do not have permission to delete this entry." });
+    }
+
+    // 4. Delete Record
+    const deleteQuery = `DELETE FROM working_date_history WHERE id = $1 RETURNING *`;
+    const { rows } = await client.query(deleteQuery, [id]);
+    res.json({ message: "Work entry deleted successfully", data: rows[0] });
+
+  } catch (err) {
+    console.error("❌ Delete Working Date Error:", err);
+    res.status(500).json({ error: "Internal Server Error", details: err.message });
+  } finally {
+    client.release();
   }
 };
