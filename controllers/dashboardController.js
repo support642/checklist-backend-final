@@ -1570,41 +1570,281 @@ export const getDashboardSummaryCounts = async (req, res) => {
     }
 
     const result = await pool.query(query, params);
-    const row = result.rows[0] || {};
+  const row = result.rows[0] || {};
 
-    const totalTasks = Number(row.total_tasks || 0);
-    const completedTasks = Number(row.completed_tasks || 0);
-    const pendingTasks = Number(row.pending_tasks || 0);
-    const overdueTasks = Number(row.overdue_tasks || 0);
-    const notDoneTasks = Number(row.not_done_tasks || 0);
-    const pendingToday = Number(row.pending_today || 0);
-    const pendingUpcoming = Number(row.pending_upcoming || 0);
-    const pendingOverdue = Number(row.pending_overdue || 0);
+  const totalTasks = Number(row.total_tasks || 0);
+  const completedTasks = Number(row.completed_tasks || 0);
+  const pendingTasks = Number(row.pending_tasks || 0);
+  const overdueTasks = Number(row.overdue_tasks || 0);
+  const notDoneTasks = Number(row.not_done_tasks || 0);
+  const pendingToday = Number(row.pending_today || 0);
+  const pendingUpcoming = Number(row.pending_upcoming || 0);
+  const pendingOverdue = Number(row.pending_overdue || 0);
 
-    const completedRatingOne = Number(row.completed_rating_one || 0);
-    const completedRatingTwo = Number(row.completed_rating_two || 0);
-    const completedRatingThreePlus = Number(row.completed_rating_three_plus || 0);
+  const completedRatingOne = Number(row.completed_rating_one || 0);
+  const completedRatingTwo = Number(row.completed_rating_two || 0);
+  const completedRatingThreePlus = Number(row.completed_rating_three_plus || 0);
 
-    const completionRate = totalTasks > 0 ? Number(((completedTasks / totalTasks) * 100).toFixed(1)) : 0;
+  const completionRate = totalTasks > 0 ? Number(((completedTasks / totalTasks) * 100).toFixed(1)) : 0;
 
-    res.json({
-      totalTasks,
-      completedTasks,
-      pendingTasks,
-      overdueTasks,
-      notDoneTasks,
-      pendingToday,
-      pendingUpcoming,
-      pendingOverdue,
-      completedRatingOne,
-      completedRatingTwo,
-      completedRatingThreePlus,
-      completionRate
-    });
+  res.json({
+    totalTasks,
+    completedTasks,
+    pendingTasks,
+    overdueTasks,
+    notDoneTasks,
+    pendingToday,
+    pendingUpcoming,
+    pendingOverdue,
+    completedRatingOne,
+    completedRatingTwo,
+    completedRatingThreePlus,
+    completionRate
+  });
 
+} catch (err) {
+  console.error("DASHBOARD SUMMARY COUNTS ERROR:", err.message);
+  res.status(500).json({ error: "Error fetching dashboard summary counts" });
+}
+};
+
+export const getDepartmentReportSummary = async (req, res) => {
+  try {
+    const {
+      dashboardType = "checklist",
+      staffFilter = "all",
+      departmentFilter = "all",
+      unitFilter = "all",
+      divisionFilter = "all",
+      role,
+      username,
+      startDate,
+      endDate
+    } = req.query;
+
+    const { table, dateCol } = getMapping(dashboardType);
+    const { firstDayStr, currentDayStr } = getCurrentMonthRange();
+
+    let start = startDate || firstDayStr;
+    let end = endDate || currentDayStr;
+
+    const upRole = (role || "").toUpperCase();
+    const requesterUnit = req.query.unit || "";
+    const requesterDivision = req.query.division || "";
+    const requesterDepartment = (req.query.department || "").trim();
+
+    // Build common filter SQL conditions
+    let filterQuery = "";
+    const params = [];
+    let paramCount = 1;
+
+    // Role-based restrictions
+    if (upRole === "SUPER_ADMIN") {
+      // No extra filter
+    } else if (upRole === "DIV_ADMIN") {
+      if (requesterUnit && requesterDivision) {
+        filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount}) AND LOWER(t.division) = LOWER($${paramCount + 1})`;
+        params.push(requesterUnit, requesterDivision);
+        paramCount += 2;
+      }
+    } else if (upRole === "ADMIN") {
+      if (requesterUnit && requesterDivision && requesterDepartment) {
+        if (requesterDepartment.includes(',')) {
+          const depts = requesterDepartment.split(',').map(d => d.trim().toLowerCase());
+          filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount}) AND LOWER(t.division) = LOWER($${paramCount + 1}) AND LOWER(t.department) = ANY($${paramCount + 2})`;
+          params.push(requesterUnit, requesterDivision, depts);
+          paramCount += 3;
+        } else {
+          filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount}) AND LOWER(t.division) = LOWER($${paramCount + 1}) AND LOWER(t.department) = LOWER($${paramCount + 2})`;
+          params.push(requesterUnit, requesterDivision, requesterDepartment);
+          paramCount += 3;
+        }
+      } else {
+        if (staffFilter && staffFilter !== "all") {
+          filterQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+          params.push(staffFilter);
+          paramCount++;
+        }
+        if (departmentFilter && departmentFilter !== "all") {
+          filterQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+          params.push(departmentFilter);
+          paramCount++;
+        }
+      }
+    } else if (username) {
+      filterQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+      params.push(username);
+      paramCount++;
+      if (requesterDivision) {
+        filterQuery += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+        params.push(requesterDivision);
+        paramCount++;
+      }
+      if (requesterDepartment) {
+        filterQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+        params.push(requesterDepartment);
+        paramCount++;
+      }
+    }
+
+    // Manual overrides from UI (if permitted)
+    if (upRole === "SUPER_ADMIN" || upRole === "DIV_ADMIN" || upRole === "ADMIN") {
+      if (staffFilter && staffFilter !== "all" && upRole !== "ADMIN") {
+        filterQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+        params.push(staffFilter);
+        paramCount++;
+      }
+      if (departmentFilter && departmentFilter !== "all") {
+        filterQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+        params.push(departmentFilter);
+        paramCount++;
+      }
+      if (unitFilter && unitFilter !== "all") {
+        filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount})`;
+        params.push(unitFilter);
+        paramCount++;
+      }
+      if (divisionFilter && divisionFilter !== "all") {
+        filterQuery += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+        params.push(divisionFilter);
+        paramCount++;
+      }
+    }
+
+    let query = "";
+
+    if (dashboardType === "delegation") {
+      const startIdx = paramCount;
+      const endIdx = paramCount + 1;
+      params.push(start, end);
+
+      if (startDate && endDate) {
+        query = `
+          SELECT
+            COALESCE(t.division, 'N/A') AS division,
+            COALESCE(t.department, 'N/A') AS department,
+            COUNT(*) AS total,
+            SUM(CASE WHEN submission_date IS NOT NULL THEN 1 ELSE 0 END) AS completed,
+            SUM(CASE WHEN submission_date IS NULL AND planned_date::date >= CURRENT_DATE THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN planned_date::date < CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS overdue
+          FROM delegation t
+          LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
+            AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
+            AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
+          WHERE (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
+            AND t.planned_date::date >= $${startIdx}::date
+            AND t.planned_date::date <= $${endIdx}::date
+            ${filterQuery}
+          GROUP BY COALESCE(t.division, 'N/A'), COALESCE(t.department, 'N/A')
+          ORDER BY division, department
+        `;
+      } else {
+        const hasDateRangeIdx = paramCount + 2;
+        params.push(false);
+        query = `
+          SELECT
+            COALESCE(t.division, 'N/A') AS division,
+            COALESCE(t.department, 'N/A') AS department,
+            SUM(CASE WHEN (planned_date::date >= $${startIdx} AND planned_date::date <= $${endIdx}) OR submission_date IS NOT NULL THEN 1 ELSE 0 END) AS total,
+            SUM(CASE WHEN submission_date IS NOT NULL THEN 1 ELSE 0 END) AS completed,
+            SUM(CASE WHEN submission_date IS NULL AND planned_date::date >= CURRENT_DATE THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN planned_date::date < CURRENT_DATE AND submission_date IS NULL 
+                      AND (CASE WHEN $${hasDateRangeIdx} THEN planned_date::date >= $${startIdx} AND planned_date::date <= $${endIdx} ELSE true END) THEN 1 ELSE 0 END) AS overdue
+          FROM delegation t
+          LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
+            AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
+            AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
+          WHERE (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
+            ${filterQuery}
+          GROUP BY COALESCE(t.division, 'N/A'), COALESCE(t.department, 'N/A')
+          ORDER BY division, department
+        `;
+      }
+    } else {
+      // Checklist / Maintenance: Base date filter in WHERE clause
+      let fromTable = table;
+      if (dashboardType === "checklist") {
+        fromTable = `(
+          SELECT 
+            name, 
+            department, 
+            division, 
+            unit,
+            submission_date, 
+            status, 
+            task_start_date,
+            given_by,
+            task_description,
+            frequency,
+            created_at,
+            delay
+          FROM checklist
+          UNION ALL
+          SELECT 
+            user_name AS name, 
+            department, 
+            division, 
+            unit,
+            work_datetime AS submission_date, 
+            'yes'::public.enable_reminder AS status, 
+            work_datetime AS task_start_date,
+            assign_by AS given_by,
+            work_details AS task_description,
+            'DAILY' AS frequency,
+            created_at::timestamp,
+            interval '0' AS delay
+          FROM working_date_history
+          WHERE LOWER(status) = 'completed'
+        )`;
+      }
+
+      const completedExp = dashboardType === "checklist"
+        ? "t.submission_date IS NOT NULL AND t.status = 'yes'"
+        : "t.submission_date IS NOT NULL";
+
+      const startIdx = paramCount;
+      const endIdx = paramCount + 1;
+      params.push(start, end);
+
+      const targetDateCol = "task_start_date";
+
+      query = `
+        SELECT
+          COALESCE(t.division, 'N/A') AS division,
+          COALESCE(t.department, 'N/A') AS department,
+          COUNT(*) AS total,
+          SUM(CASE WHEN ${completedExp} THEN 1 ELSE 0 END) AS completed,
+          SUM(CASE WHEN t.submission_date IS NULL AND t.${targetDateCol}::date >= CURRENT_DATE THEN 1 ELSE 0 END) AS pending,
+          SUM(CASE WHEN t.${targetDateCol}::date < CURRENT_DATE AND t.submission_date IS NULL THEN 1 ELSE 0 END) AS overdue
+        FROM ${fromTable} t
+        LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
+          AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
+          AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
+        WHERE (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
+          AND t.${targetDateCol}::date >= $${startIdx}::date
+          AND t.${targetDateCol}::date <= $${endIdx}::date
+          ${filterQuery}
+        GROUP BY COALESCE(t.division, 'N/A'), COALESCE(t.department, 'N/A')
+        ORDER BY division, department
+      `;
+    }
+
+    const result = await pool.query(query, params);
+    
+    const rows = result.rows.map(row => ({
+      division: row.division,
+      department: row.department,
+      total: Number(row.total || 0),
+      completed: Number(row.completed || 0),
+      pending: Number(row.pending || 0),
+      overdue: Number(row.overdue || 0)
+    }));
+
+    res.json(rows);
   } catch (err) {
-    console.error("DASHBOARD SUMMARY COUNTS ERROR:", err.message);
-    res.status(500).json({ error: "Error fetching dashboard summary counts" });
+    console.error("DASHBOARD DEPARTMENT REPORT SUMMARY ERROR:", err.message);
+    res.status(500).json({ error: "Error fetching department report summary" });
   }
 };
+
 
