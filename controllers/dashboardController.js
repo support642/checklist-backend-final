@@ -1847,4 +1847,150 @@ export const getDepartmentReportSummary = async (req, res) => {
   }
 };
 
+export const getMachineReportSummary = async (req, res) => {
+  try {
+    const {
+      staffFilter = "all",
+      departmentFilter = "all",
+      unitFilter = "all",
+      divisionFilter = "all",
+      role,
+      username,
+      startDate,
+      endDate
+    } = req.query;
+
+    const { firstDayStr, currentDayStr } = getCurrentMonthRange();
+
+    let start = startDate || firstDayStr;
+    let end = endDate || currentDayStr;
+
+    const upRole = (role || "").toUpperCase();
+    const requesterUnit = req.query.unit || "";
+    const requesterDivision = req.query.division || "";
+    const requesterDepartment = (req.query.department || "").trim();
+
+    // Build common filter SQL conditions
+    let filterQuery = "";
+    const params = [];
+    let paramCount = 1;
+
+    // Role-based restrictions
+    if (upRole === "SUPER_ADMIN") {
+      // No extra filter
+    } else if (upRole === "DIV_ADMIN") {
+      if (requesterUnit && requesterDivision) {
+        filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount}) AND LOWER(t.division) = LOWER($${paramCount + 1})`;
+        params.push(requesterUnit, requesterDivision);
+        paramCount += 2;
+      }
+    } else if (upRole === "ADMIN") {
+      if (requesterUnit && requesterDivision && requesterDepartment) {
+        if (requesterDepartment.includes(',')) {
+          const depts = requesterDepartment.split(',').map(d => d.trim().toLowerCase());
+          filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount}) AND LOWER(t.division) = LOWER($${paramCount + 1}) AND LOWER(t.department) = ANY($${paramCount + 2})`;
+          params.push(requesterUnit, requesterDivision, depts);
+          paramCount += 3;
+        } else {
+          filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount}) AND LOWER(t.division) = LOWER($${paramCount + 1}) AND LOWER(t.department) = LOWER($${paramCount + 2})`;
+          params.push(requesterUnit, requesterDivision, requesterDepartment);
+          paramCount += 3;
+        }
+      } else {
+        if (staffFilter && staffFilter !== "all") {
+          filterQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+          params.push(staffFilter);
+          paramCount++;
+        }
+        if (departmentFilter && departmentFilter !== "all") {
+          filterQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+          params.push(departmentFilter);
+          paramCount++;
+        }
+      }
+    } else if (username) {
+      filterQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+      params.push(username);
+      paramCount++;
+      if (requesterDivision) {
+        filterQuery += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+        params.push(requesterDivision);
+        paramCount++;
+      }
+      if (requesterDepartment) {
+        filterQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+        params.push(requesterDepartment);
+        paramCount++;
+      }
+    }
+
+    // Manual overrides from UI (if permitted)
+    if (upRole === "SUPER_ADMIN" || upRole === "DIV_ADMIN" || upRole === "ADMIN") {
+      if (staffFilter && staffFilter !== "all" && upRole !== "ADMIN") {
+        filterQuery += ` AND LOWER(t.name) = LOWER($${paramCount})`;
+        params.push(staffFilter);
+        paramCount++;
+      }
+      if (departmentFilter && departmentFilter !== "all") {
+        filterQuery += ` AND LOWER(t.department) = LOWER($${paramCount})`;
+        params.push(departmentFilter);
+        paramCount++;
+      }
+      if (unitFilter && unitFilter !== "all") {
+        filterQuery += ` AND LOWER(t.unit) = LOWER($${paramCount})`;
+        params.push(unitFilter);
+        paramCount++;
+      }
+      if (divisionFilter && divisionFilter !== "all") {
+        filterQuery += ` AND LOWER(t.division) = LOWER($${paramCount})`;
+        params.push(divisionFilter);
+        paramCount++;
+      }
+    }
+
+    const startIdx = paramCount;
+    const endIdx = paramCount + 1;
+    params.push(start, end);
+
+    const query = `
+      SELECT
+        COALESCE(t.machine_division, 'N/A') AS machine_division,
+        COALESCE(t.machine_department, 'N/A') AS machine_department,
+        COALESCE(t.machine_name, 'N/A') AS machine_name,
+        COUNT(*) AS total,
+        SUM(CASE WHEN t.submission_date IS NOT NULL THEN 1 ELSE 0 END) AS completed,
+        SUM(CASE WHEN t.submission_date IS NULL AND t.task_start_date::date >= CURRENT_DATE THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN t.task_start_date::date < CURRENT_DATE AND t.submission_date IS NULL THEN 1 ELSE 0 END) AS overdue
+      FROM maintenance_tasks t
+      LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
+        AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
+        AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
+      WHERE (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
+        AND t.task_start_date::date >= $${startIdx}::date
+        AND t.task_start_date::date <= $${endIdx}::date
+        ${filterQuery}
+      GROUP BY COALESCE(t.machine_division, 'N/A'), COALESCE(t.machine_department, 'N/A'), COALESCE(t.machine_name, 'N/A')
+      ORDER BY machine_division, machine_department, machine_name
+    `;
+
+    const result = await pool.query(query, params);
+    
+    const rows = result.rows.map(row => ({
+      machine_division: row.machine_division,
+      machine_department: row.machine_department,
+      machine_name: row.machine_name,
+      total: Number(row.total || 0),
+      completed: Number(row.completed || 0),
+      pending: Number(row.pending || 0),
+      overdue: Number(row.overdue || 0)
+    }));
+
+    res.json(rows);
+  } catch (err) {
+    console.error("DASHBOARD MACHINE REPORT SUMMARY ERROR:", err.message);
+    res.status(500).json({ error: "Error fetching machine report summary" });
+  }
+};
+
+
 

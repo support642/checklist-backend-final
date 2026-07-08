@@ -14,7 +14,8 @@ import {
   getChecklistDateRangeCount,
   getStaffTaskSummary,
   getDashboardSummaryCounts,
-  getDepartmentReportSummary
+  getDepartmentReportSummary,
+  getMachineReportSummary
 } from "../controllers/dashboardController.js";
 
 const router = express.Router();
@@ -23,6 +24,7 @@ const router = express.Router();
 router.get("/", getDashboardData);
 router.get("/summary-counts", getDashboardSummaryCounts);
 router.get("/report-summary", getDepartmentReportSummary);
+router.get("/machine-report-summary", getMachineReportSummary);
 
 // COUNT APIs
 router.get("/total", getTotalTask);

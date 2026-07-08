@@ -255,12 +255,19 @@ export const getMaintenanceHistory = async (req, res) => {
         const nameFilter = req.query.nameFilter;
         const unitFilter = req.query.unitFilter;
 
+        const usePlannedDate = req.query.usePlannedDate === 'true';
+
         const whereConditions = [`t.submission_date IS NOT NULL`];
         const countWhereConditions = [`t.submission_date IS NOT NULL`];
         const params = [limit, offset];
         const countParams = [];
         let paramIndex = 3;
         let countParamIndex = 1;
+
+        if (usePlannedDate) {
+            whereConditions.push(`(t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))`);
+            countWhereConditions.push(`(t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))`);
+        }
 
         const addFilter = (condition, value) => {
             whereConditions.push(condition.replace(/\?/g, () => `$${paramIndex++}`));
@@ -270,10 +277,18 @@ export const getMaintenanceHistory = async (req, res) => {
         };
 
         if (startDate) {
-            addFilter(`t.submission_date >= ?`, startDate);
+            if (usePlannedDate) {
+                addFilter(`t.task_start_date::date >= ?`, startDate);
+            } else {
+                addFilter(`t.submission_date >= ?`, startDate);
+            }
         }
         if (endDate) {
-            addFilter(`t.submission_date <= ?`, `${endDate} 23:59:59`);
+            if (usePlannedDate) {
+                addFilter(`t.task_start_date::date <= ?`, endDate);
+            } else {
+                addFilter(`t.submission_date <= ?`, `${endDate} 23:59:59`);
+            }
         }
 
         const upRole = (role || "").toUpperCase();
