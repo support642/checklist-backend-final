@@ -211,8 +211,12 @@ export const getDashboardData = async (req, res) => {
     // ---------------------------
     // Use planned_date for delegation, task_start_date for checklist
 
-    // Exclude Leave and Inactive (Day Off) tasks from main views
-    query += ` AND (${table}.status IS NULL OR LOWER(${table}.status::text) NOT IN ('leave', 'inactive')) `;
+    // Exclude Leave and Inactive (Day Off) tasks from main views unless taskView is "leave"
+    if (taskView === "leave") {
+      query += ` AND (LOWER(${table}.status::text) IN ('leave', 'inactive')) `;
+    } else {
+      query += ` AND (${table}.status IS NULL OR LOWER(${table}.status::text) NOT IN ('leave', 'inactive')) `;
+    }
 
     if (taskView === "recent") {
       // TODAY TASKS
@@ -265,7 +269,7 @@ export const getDashboardData = async (req, res) => {
         query += ` AND ${table}.submission_date IS NULL`;
       }
     }
-    else if (taskView === "all") {
+    else if (taskView === "all" || taskView === "leave") {
       // ALL TASKS IN CURRENT MONTH (OR COMPLETED DELEGATION TASKS)
       let start = startDate;
       let end = endDate;
