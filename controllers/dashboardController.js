@@ -1454,7 +1454,8 @@ export const getDashboardSummaryCounts = async (req, res) => {
             SUM(CASE WHEN planned_date::date < CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS pending_overdue,
             SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 1 THEN 1 ELSE 0 END) AS completed_rating_one,
             SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 2 THEN 1 ELSE 0 END) AS completed_rating_two,
-            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for >= 3 THEN 1 ELSE 0 END) AS completed_rating_three_plus
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for >= 3 THEN 1 ELSE 0 END) AS completed_rating_three_plus,
+            SUM(CASE WHEN submission_date IS NOT NULL AND (color_code_for = 1 OR color_code_for = '1') THEN 1 ELSE 0 END) AS completed_on_time
           FROM delegation t
           LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
             AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
@@ -1480,7 +1481,8 @@ export const getDashboardSummaryCounts = async (req, res) => {
             SUM(CASE WHEN planned_date::date < CURRENT_DATE AND submission_date IS NULL THEN 1 ELSE 0 END) AS pending_overdue,
             SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 1 THEN 1 ELSE 0 END) AS completed_rating_one,
             SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for = 2 THEN 1 ELSE 0 END) AS completed_rating_two,
-            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for >= 3 THEN 1 ELSE 0 END) AS completed_rating_three_plus
+            SUM(CASE WHEN submission_date IS NOT NULL AND color_code_for >= 3 THEN 1 ELSE 0 END) AS completed_rating_three_plus,
+            SUM(CASE WHEN submission_date IS NOT NULL AND (color_code_for = 1 OR color_code_for = '1') THEN 1 ELSE 0 END) AS completed_on_time
           FROM delegation t
           LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
             AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
@@ -1531,6 +1533,10 @@ export const getDashboardSummaryCounts = async (req, res) => {
         ? "t.submission_date IS NOT NULL AND t.status = 'yes'"
         : "t.submission_date IS NOT NULL";
 
+      const onTimeExp = dashboardType === "checklist"
+        ? "t.submission_date IS NOT NULL AND t.status = 'yes' AND t.delay <= interval '0'"
+        : "t.submission_date IS NOT NULL AND t.status = 'Done'";
+
       const startIdx = paramCount;
       const endIdx = paramCount + 1;
       params.push(start, end);
@@ -1561,7 +1567,8 @@ export const getDashboardSummaryCounts = async (req, res) => {
             END
             THEN 1 ELSE 0 
           END) AS pending_upcoming,
-          SUM(CASE WHEN t.${targetDateCol}::date < CURRENT_DATE AND t.submission_date IS NULL THEN 1 ELSE 0 END) AS pending_overdue
+          SUM(CASE WHEN t.${targetDateCol}::date < CURRENT_DATE AND t.submission_date IS NULL THEN 1 ELSE 0 END) AS pending_overdue,
+          SUM(CASE WHEN ${onTimeExp} THEN 1 ELSE 0 END) AS completed_on_time
         FROM ${fromTable} t
         LEFT JOIN users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) 
           AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) 
@@ -1588,6 +1595,7 @@ export const getDashboardSummaryCounts = async (req, res) => {
   const completedRatingOne = Number(row.completed_rating_one || 0);
   const completedRatingTwo = Number(row.completed_rating_two || 0);
   const completedRatingThreePlus = Number(row.completed_rating_three_plus || 0);
+  const completedOnTime = Number(row.completed_on_time || 0);
 
   const completionRate = totalTasks > 0 ? Number(((completedTasks / totalTasks) * 100).toFixed(1)) : 0;
 
@@ -1603,6 +1611,7 @@ export const getDashboardSummaryCounts = async (req, res) => {
     completedRatingOne,
     completedRatingTwo,
     completedRatingThreePlus,
+    completedOnTime,
     completionRate
   });
 
