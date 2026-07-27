@@ -181,6 +181,7 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', ')) as part_name,
         COALESCE(mp.machine_area, t.part_area) as part_area,
         t.duration,
+        t.manpower,
         t.planned_date::text as planned_date,
         t.created_at::text as created_at,
         t.machine_part_id,
@@ -387,7 +388,7 @@ export const getMaintenanceHistory = async (req, res) => {
                 COALESCE(mp.machine_name, t.machine_name) as machine_name,
                 COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', ')) as part_name,
                 COALESCE(mp.machine_area, t.part_area) as part_area,
-                t.duration, t.planned_date::text as planned_date, t.created_at::text as created_at,
+                t.duration, t.manpower, t.planned_date::text as planned_date, t.created_at::text as created_at,
                 t.machine_part_id, t.machine_department, t.machine_division, t.submitted_by,
                 t.approved_by,
                 t.submission_date as raw_submission_date
@@ -713,6 +714,7 @@ export const getUniqueMaintenanceTasks = async (req, res) => {
             COALESCE(array_to_string(t.part_name, ', '), array_to_string(mp.part_name, ', ')) as part_name,
             COALESCE(mp.machine_area, t.part_area) as part_area,
             t.duration,
+            t.manpower,
             TO_CHAR(t.planned_date, 'YYYY-MM-DD"T"HH24:MI:SS') as planned_date,
             t.created_at::text as created_at,
             t.machine_part_id,
@@ -824,9 +826,10 @@ export const updateUniqueMaintenanceTask = async (req, res) => {
             duration = $12,
             status = $13,
             machine_department = $14,
-            machine_division = $15
-          WHERE name = $16
-          AND task_description = $17
+            machine_division = $15,
+            manpower = $16
+          WHERE name = $17
+          AND task_description = $18
           AND submission_date IS NULL
           RETURNING *
         `;
@@ -848,6 +851,7 @@ export const updateUniqueMaintenanceTask = async (req, res) => {
             updatedTask.status || originalTask.status, // Fallback if status is empty string from "Select Status" option
             updatedTask.machine_department,
             updatedTask.machine_division,
+            updatedTask.manpower ? parseInt(updatedTask.manpower, 10) : 0,
             originalTask.name,
             originalTask.task_description
         ];

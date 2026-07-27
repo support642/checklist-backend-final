@@ -120,7 +120,13 @@ export const getStaffTasks = async (req, res) => {
              THEN EXTRACT(EPOCH FROM (t.submission_date - t.${dateCol})) / 86400.0
              ELSE 0
           END
-        ) AS avg_delay_days
+        ) AS avg_delay_days,
+        COUNT(DISTINCT t.${dateCol}::date) AS total_assigned_days,
+        COUNT(DISTINCT CASE 
+          WHEN (t.submission_date IS NOT NULL AND t.submission_date <= t.${dateCol})
+            OR (t.submission_date IS NULL AND ${completedCondition} AND t.${dateCol} <= NOW())
+          THEN t.${dateCol}::date 
+        END) AS present_days
       FROM ${fromTable} t
       ${joinType} users u ON TRIM(LOWER(t.name)) = TRIM(LOWER(u.user_name)) AND TRIM(LOWER(t.department)) = TRIM(LOWER(u.department)) AND TRIM(LOWER(t.division)) = TRIM(LOWER(u.division))
       WHERE t.name IS NOT NULL
@@ -243,6 +249,10 @@ export const getStaffTasks = async (req, res) => {
         onTimeScore = 100;
       }
 
+      const totalAssignedDays = Number(row.total_assigned_days) || 0;
+      const presentDays = Number(row.present_days) || 0;
+      const absentDays = Math.max(0, totalAssignedDays - presentDays);
+
       return {
         id: staffName.toLowerCase().replace(/\s+/g, "-"),
         name: staffName,
@@ -256,7 +266,12 @@ export const getStaffTasks = async (req, res) => {
         pendingTasks: pending,
         overdueTasks: overdue,
         doneOnTime: doneOnTime,
-        onTimeScore: onTimeScore
+        onTimeScore: onTimeScore,
+        presentDays: presentDays,
+        absentDays: absentDays,
+        totalAssignedDays: totalAssignedDays,
+        present: presentDays,
+        absent: absentDays
       };
     });
 

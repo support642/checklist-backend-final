@@ -223,11 +223,11 @@ export const postAssignTasks = async (req, res) => {
         const startDate = t.taskStartDate || t.startDate || t.dueDate;
 
         values.push(
-          `($${i * 23 + 1}, $${i * 23 + 2}, $${i * 23 + 3}, $${i * 23 + 4}, $${i * 23 + 5},
-            $${i * 23 + 6}, $${i * 23 + 7}, $${i * 23 + 8}, $${i * 23 + 9}, $${i * 23 + 10},
-            $${i * 23 + 11}, $${i * 23 + 12}, $${i * 23 + 13}, $${i * 23 + 14}, $${i * 23 + 15},
-            $${i * 23 + 16}, $${i * 23 + 17}, $${i * 23 + 18}, $${i * 23 + 19}, $${i * 23 + 20},
-            $${i * 23 + 21}, $${i * 23 + 22}, $${i * 23 + 23})`
+          `($${i * 24 + 1}, $${i * 24 + 2}, $${i * 24 + 3}, $${i * 24 + 4}, $${i * 24 + 5},
+            $${i * 24 + 6}, $${i * 24 + 7}, $${i * 24 + 8}, $${i * 24 + 9}, $${i * 24 + 10},
+            $${i * 24 + 11}, $${i * 24 + 12}, $${i * 24 + 13}, $${i * 24 + 14}, $${i * 24 + 15},
+            $${i * 24 + 16}, $${i * 24 + 17}, $${i * 24 + 18}, $${i * 24 + 19}, $${i * 24 + 20},
+            $${i * 24 + 21}, $${i * 24 + 22}, $${i * 24 + 23}, $${i * 24 + 24})`
         );
 
         params.push(
@@ -253,7 +253,8 @@ export const postAssignTasks = async (req, res) => {
           machinePartId,                       // 20 machine_part_id (FK)
           t.duration || null,                  // 21 duration
           resolvedMachineDept || t.machine_department || null, // 22 machine_department
-          resolvedMachineDiv || t.machine_division || null    // 23 machine_division
+          resolvedMachineDiv || t.machine_division || null,   // 23 machine_division
+          t.manpower ? parseInt(t.manpower, 10) : 0             // 24 manpower
         );
       });
 
@@ -261,7 +262,7 @@ export const postAssignTasks = async (req, res) => {
         `INSERT INTO maintenance_tasks 
         (department, given_by, name, task_description, enable_reminders,
          require_attachment, frequency, remarks, status, uploaded_image_url, admin_done,
-         planned_date, task_start_date, submission_date, unit, division, machine_name, part_name, part_area, machine_part_id, duration, machine_department, machine_division)
+         planned_date, task_start_date, submission_date, unit, division, machine_name, part_name, part_area, machine_part_id, duration, machine_department, machine_division, manpower)
         VALUES ${values.join(",")}
         RETURNING id AS task_id`,
         params
