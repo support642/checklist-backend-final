@@ -188,9 +188,11 @@ export const getPendingMaintenanceTasks = async (req, res) => {
         t.machine_department,
         t.machine_division,
         t.submitted_by,
+        COALESCE(u.designation, '—') as designation,
         COUNT(*) OVER() AS total_count
       FROM maintenance_tasks t
       LEFT JOIN machine_parts mp ON t.machine_part_id = mp.id
+      LEFT JOIN users u ON TRIM(LOWER(u.user_name)) = TRIM(LOWER(t.name))
       WHERE ${where}
       ORDER BY 
         CASE 
@@ -391,9 +393,11 @@ export const getMaintenanceHistory = async (req, res) => {
                 t.duration, t.manpower, t.planned_date::text as planned_date, t.created_at::text as created_at,
                 t.machine_part_id, t.machine_department, t.machine_division, t.submitted_by,
                 t.approved_by,
-                t.submission_date as raw_submission_date
+                t.submission_date as raw_submission_date,
+                COALESCE(u.designation, '—') as designation
             FROM maintenance_tasks t
             LEFT JOIN machine_parts mp ON t.machine_part_id = mp.id
+            LEFT JOIN users u ON TRIM(LOWER(u.user_name)) = TRIM(LOWER(t.name))
             WHERE ${whereClause}
         `;
 

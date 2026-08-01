@@ -29,18 +29,20 @@ export const getStaffTasks = async (req, res) => {
       selectedUnit = ""
     } = req.query;
 
-    const table = dashboardType;
+    const table = dashboardType === 'maintenance' ? 'maintenance_tasks' : dashboardType;
     const offset = (Number(page) - 1) * Number(limit);
 
     let completedCondition = "";
 
     if (table === "checklist") {
       completedCondition = "t.status = 'yes'";
+    } else if (table === "maintenance_tasks") {
+      completedCondition = "(t.status = 'Done' OR t.admin_done = 'Done' OR t.admin_done = 'true' OR t.submission_date IS NOT NULL)";
     } else {
       completedCondition = "LOWER(t.status) = 'yes'";
     }
 
-    const dateCol = table === "checklist" ? "task_start_date" : "planned_date";
+    const dateCol = (table === "checklist" || table === "maintenance_tasks") ? "task_start_date" : "planned_date";
 
     const params = [];
     let paramCount = 1;
@@ -89,6 +91,7 @@ export const getStaffTasks = async (req, res) => {
         COALESCE(u.division, t.division, 'N/A') AS division, 
         u.employee_id, 
         u.designation,
+        u.number,
         COUNT(t.*) AS total_tasks,
         SUM(
            CASE 
@@ -225,7 +228,7 @@ export const getStaffTasks = async (req, res) => {
       paramCount++;
     }
 
-    query += ` GROUP BY t.name, u.department, u.division, u.employee_id, u.designation, t.department, t.division, u.unit`;
+    query += ` GROUP BY t.name, u.department, u.division, u.employee_id, u.designation, u.number, t.department, t.division, u.unit`;
 
     const staffResult = await pool.query(query, params);
 
@@ -260,6 +263,8 @@ export const getStaffTasks = async (req, res) => {
         division: row.division || "N/A",
         employee_id: row.employee_id || "—",
         designation: row.designation || "—",
+        number: row.number || "—",
+        phone_number: row.number || "—",
         email: `${staffName.toLowerCase().replace(/\s+/g, ".")}@example.com`,
         totalTasks: total,
         completedTasks: completed,
