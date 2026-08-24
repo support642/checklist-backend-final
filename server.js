@@ -47,7 +47,15 @@ import { initOverdueScheduler } from "./services/notificationScheduler.js";
 import pool from "./config/db.js";
 import { sessionMiddleware } from "./middleware/sessionMiddleware.js";
 
+// Equipment Master Routes & Init
+import equipmentRoutes from "./routes/equipmentRoutes.js";
+import { initEquipmentDb } from "./utils/initEquipmentDb.js";
+
 dotenv.config();
+
+// Toggle to enable/disable invalidating sessions on server startup
+// Set to true in production, false for local development to prevent logging users out
+const ENABLE_SESSION_INVALIDATION_ON_STARTUP = true;
 
 const app = express();
 app.use(cors());
@@ -73,6 +81,7 @@ app.use("/api/working-days", workingDayRoutes);
 app.use("/api/import", importRoutes);
 app.use("/api/leave", leaveRoutes);
 app.use("/api/maintenance", maintenanceRoutes);
+app.use("/api/equipment", equipmentRoutes);
 
 // DOCUMENTATION MODULE ROUTES
 app.use("/api/doc-dashboard", docDashboardRoutes);
@@ -121,13 +130,20 @@ process.on('unhandledRejection', (reason, promise) => {
 
 app.listen(PORT, "0.0.0.0", async () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  try {
-    // Invalidate all sessions on startup (Redeploy Logout)
-    await pool.query("UPDATE sessions SET is_active = false");
-    console.log("✅ All previous sessions invalidated on startup.");
-  } catch (err) {
-    console.error("❌ Error invalidating sessions on startup:", err);
+
+  if (ENABLE_SESSION_INVALIDATION_ON_STARTUP) {
+    try {
+      // Invalidate all sessions on startup (Redeploy Logout)
+      await pool.query("UPDATE sessions SET is_active = false");
+      console.log("✅ All previous sessions invalidated on startup.");
+    } catch (err) {
+      console.error("❌ Error invalidating sessions on startup:", err);
+    }
+  } else {
+    console.log("ℹ️ Session invalidation on startup is disabled (Development Mode).");
   }
   // Initialize Overdue Task Scheduler
   initOverdueScheduler();
+  // Initialize Equipment Master DB
+  await initEquipmentDb();
 });
