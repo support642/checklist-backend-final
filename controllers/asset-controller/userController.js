@@ -2,7 +2,7 @@ import db from '../../config/db.js';
 
 export const getAssetUsers = async (req, res) => {
     try {
-        const query = 'SELECT id, user_name FROM users ORDER BY user_name ASC';
+        const query = 'SELECT id, user_name, unit, division, department FROM users ORDER BY user_name ASC';
         const { rows } = await db.query(query);
         res.status(200).json(rows);
     } catch (error) {

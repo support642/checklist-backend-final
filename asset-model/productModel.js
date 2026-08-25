@@ -314,10 +314,12 @@ class ProductModel {
             // 9. Specs array (if any)
             if (data.specs && Array.isArray(data.specs)) {
                 for (let spec of data.specs) {
-                    if (spec.name) {
+                    const specName = typeof spec === 'string' ? spec : (spec.name || spec.value || '');
+                    const specValue = typeof spec === 'string' ? '' : (spec.value || '');
+                    if (specName && String(specName).trim()) {
                         await client.query(
                             'INSERT INTO product_specs (product_id, spec_name, spec_value) VALUES ($1, $2, $3)',
-                            [productId, spec.name, spec.value]
+                            [productId, String(specName).trim(), specValue ? String(specValue).trim() : '']
                         );
                     }
                 }
@@ -461,10 +463,12 @@ class ProductModel {
             if (data.specs && Array.isArray(data.specs)) {
                 await client.query('DELETE FROM product_specs WHERE product_id = $1', [id]);
                 for (let spec of data.specs) {
-                    if (spec.name) {
+                    const specName = typeof spec === 'string' ? spec : (spec.name || spec.value || '');
+                    const specValue = typeof spec === 'string' ? '' : (spec.value || '');
+                    if (specName && String(specName).trim()) {
                         await client.query(
                             'INSERT INTO product_specs (product_id, spec_name, spec_value) VALUES ($1, $2, $3)',
-                            [id, spec.name, spec.value]
+                            [id, String(specName).trim(), specValue ? String(specValue).trim() : '']
                         );
                     }
                 }
