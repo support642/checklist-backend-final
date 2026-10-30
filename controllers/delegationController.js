@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 import { uploadToS3 } from "../middleware/s3Upload.js";
 import { sendDelegationStatusUpdateEmail, sendUrgentTaskEmail } from "../services/emailService.js";
 import whatsappService from "../services/whatsappService.js";
+import { activeDoerClause } from "../utils/activeUsers.js";
 
 
 /* ------------------------------------------------------
@@ -30,13 +31,13 @@ export const fetchDelegationDataSortByDate = async (req, res) => {
     }
 
     if (upRole === "SUPER_ADMIN") {
-      query = `SELECT * FROM delegation WHERE ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
+      query = `SELECT * FROM delegation WHERE ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter}${activeDoerClause('delegation.name')} ORDER BY task_start_date ASC;`;
     } else if (upRole === "DIV_ADMIN") {
-      query = `SELECT * FROM delegation WHERE LOWER(division)=LOWER($1) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
+      query = `SELECT * FROM delegation WHERE LOWER(division)=LOWER($1) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter}${activeDoerClause('delegation.name')} ORDER BY task_start_date ASC;`;
     } else if (upRole === "ADMIN") {
-      query = `SELECT * FROM delegation WHERE LOWER(division)=LOWER($1) AND LOWER(department)=LOWER($2) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
+      query = `SELECT * FROM delegation WHERE LOWER(division)=LOWER($1) AND LOWER(department)=LOWER($2) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter}${activeDoerClause('delegation.name')} ORDER BY task_start_date ASC;`;
     } else {
-      query = `SELECT * FROM delegation WHERE LOWER(name) = LOWER($1) AND LOWER(division) = LOWER($2) AND LOWER(department) = LOWER($3) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter} ORDER BY task_start_date ASC;`;
+      query = `SELECT * FROM delegation WHERE LOWER(name) = LOWER($1) AND LOWER(division) = LOWER($2) AND LOWER(department) = LOWER($3) AND ((status IS NULL OR status = '' OR status = 'extend' OR status = 'pending') OR (planned_date IS NOT NULL AND submission_date IS NULL))${dateFilter}${activeDoerClause('delegation.name')} ORDER BY task_start_date ASC;`;
     }
 
     let params_val = [];

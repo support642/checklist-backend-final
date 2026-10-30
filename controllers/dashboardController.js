@@ -1508,7 +1508,8 @@ export const getDashboardSummaryCounts = async (req, res) => {
             task_description,
             frequency,
             created_at,
-            delay
+            delay,
+            planned_date::timestamp AS planned_date
           FROM checklist
           UNION ALL
           SELECT 
@@ -1523,7 +1524,8 @@ export const getDashboardSummaryCounts = async (req, res) => {
             work_details AS task_description,
             'DAILY' AS frequency,
             created_at::timestamp,
-            interval '0' AS delay
+            interval '0' AS delay,
+            work_datetime::timestamp AS planned_date
           FROM working_date_history
           WHERE LOWER(status) = 'completed'
         )`;
@@ -1534,7 +1536,7 @@ export const getDashboardSummaryCounts = async (req, res) => {
         : "t.submission_date IS NOT NULL";
 
       const onTimeExp = dashboardType === "checklist"
-        ? "t.submission_date IS NOT NULL AND t.status = 'yes' AND t.delay <= interval '0'"
+        ? "t.submission_date IS NOT NULL AND t.status = 'yes' AND t.planned_date IS NOT NULL AND t.submission_date::date <= t.planned_date::date"
         : "t.submission_date IS NOT NULL AND t.status = 'Done'";
 
       const startIdx = paramCount;

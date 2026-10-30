@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { findInvalidDoers } from "../utils/activeUsers.js";
 
 // Helper function to sanitize enum values (handle "NULL" strings, empty values, etc.)
 const sanitizeEnumValue = (value, defaultValue = 'no') => {
@@ -147,7 +148,7 @@ const generateTaskDates = async (startDate, frequency, count = 365, username = n
 // (e.g., 500 rows per batch) to handle larger imports safely.
 export const bulkImportChecklist = async (req, res) => {
   try {
-    const tasks = req.body;
+    let tasks = req.body;
 
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return res.status(400).json({
@@ -173,6 +174,20 @@ export const bulkImportChecklist = async (req, res) => {
         success: false,
         message: "Validation errors",
         errors
+      });
+    }
+
+    // Import only rows whose doer is an active user; report the rest back to the caller
+    const invalidDoers = await findInvalidDoers(tasks.map(t => t.name));
+    const invalidSet = new Set(invalidDoers.map(n => n.toLowerCase()));
+    const skippedRows = tasks.filter(t => invalidSet.has(String(t.name ?? "").trim().toLowerCase()));
+    tasks = tasks.filter(t => !invalidSet.has(String(t.name ?? "").trim().toLowerCase()));
+    if (tasks.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No rows imported: none of the doers are active users",
+        skippedDoers: invalidDoers,
+        skippedCount: skippedRows.length
       });
     }
 
@@ -276,6 +291,8 @@ export const bulkImportChecklist = async (req, res) => {
       success: true,
       message: `Successfully generated ${result.rows.length} task instances from ${tasks.length} unique task definitions`,
       count: result.rows.length, // For frontend compatibility
+      skippedDoers: invalidDoers,
+      skippedCount: skippedRows.length,
       uniqueTasksCount: tasks.length,
       generatedTasksCount: result.rows.length,
       insertedIds: result.rows.map(r => r.task_id)
@@ -294,7 +311,7 @@ export const bulkImportChecklist = async (req, res) => {
 // Bulk import into delegation table
 export const bulkImportDelegation = async (req, res) => {
   try {
-    const tasks = req.body;
+    let tasks = req.body;
 
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return res.status(400).json({
@@ -320,6 +337,20 @@ export const bulkImportDelegation = async (req, res) => {
         success: false,
         message: "Validation errors",
         errors
+      });
+    }
+
+    // Import only rows whose doer is an active user; report the rest back to the caller
+    const invalidDoers = await findInvalidDoers(tasks.map(t => t.name));
+    const invalidSet = new Set(invalidDoers.map(n => n.toLowerCase()));
+    const skippedRows = tasks.filter(t => invalidSet.has(String(t.name ?? "").trim().toLowerCase()));
+    tasks = tasks.filter(t => !invalidSet.has(String(t.name ?? "").trim().toLowerCase()));
+    if (tasks.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No rows imported: none of the doers are active users",
+        skippedDoers: invalidDoers,
+        skippedCount: skippedRows.length
       });
     }
 
@@ -383,6 +414,8 @@ export const bulkImportDelegation = async (req, res) => {
       success: true,
       message: `Successfully imported ${result.rows.length} tasks`,
       count: result.rows.length,
+      skippedDoers: invalidDoers,
+      skippedCount: skippedRows.length,
       insertedIds: result.rows.map(r => r.task_id)
     });
 
@@ -399,7 +432,7 @@ export const bulkImportDelegation = async (req, res) => {
 // Bulk import into maintenance_tasks table
 export const bulkImportMaintenance = async (req, res) => {
   try {
-    const tasks = req.body;
+    let tasks = req.body;
 
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return res.status(400).json({
@@ -425,6 +458,20 @@ export const bulkImportMaintenance = async (req, res) => {
         success: false,
         message: "Validation errors",
         errors
+      });
+    }
+
+    // Import only rows whose doer is an active user; report the rest back to the caller
+    const invalidDoers = await findInvalidDoers(tasks.map(t => t.name));
+    const invalidSet = new Set(invalidDoers.map(n => n.toLowerCase()));
+    const skippedRows = tasks.filter(t => invalidSet.has(String(t.name ?? "").trim().toLowerCase()));
+    tasks = tasks.filter(t => !invalidSet.has(String(t.name ?? "").trim().toLowerCase()));
+    if (tasks.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No rows imported: none of the doers are active users",
+        skippedDoers: invalidDoers,
+        skippedCount: skippedRows.length
       });
     }
 
@@ -545,6 +592,8 @@ export const bulkImportMaintenance = async (req, res) => {
       success: true,
       message: `Successfully generated ${insertedIds.length} maintenance task instances from ${tasks.length} unique task definitions`,
       count: insertedIds.length,
+      skippedDoers: invalidDoers,
+      skippedCount: skippedRows.length,
       insertedIds
     });
 

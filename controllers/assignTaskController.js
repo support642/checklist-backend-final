@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 import { uploadToS3 } from "../middleware/s3Upload.js";
 import { sendTaskAssignmentEmail, sendMaintenanceAssignmentEmail } from "../services/emailService.js";
 import whatsappService from "../services/whatsappService.js";
+import { findInvalidDoers } from "../utils/activeUsers.js";
 
 // 0️⃣ User Profile (for AssignTaskUser pre-fill)
 export const getUserProfile = async (req, res) => {
@@ -185,6 +186,13 @@ export const postAssignTasks = async (req, res) => {
     let imageUrl = null;
     if (req.file) {
       imageUrl = await uploadToS3(req.file);
+    }
+
+    const invalidDoers = await findInvalidDoers(tasks.map(t => t.doer));
+    if (invalidDoers.length > 0) {
+      return res.status(400).json({
+        error: `Cannot assign tasks: ${invalidDoers.join(", ")} ${invalidDoers.length > 1 ? "are" : "is"} not an active user`
+      });
     }
 
     const taskType = tasks[0].taskType;

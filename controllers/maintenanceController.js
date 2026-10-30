@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 import { uploadToS3 } from "../middleware/s3Upload.js";
 import { sendUrgentTaskEmail } from "../services/emailService.js";
 import whatsappService from "../services/whatsappService.js";
+import { activeDoerClause } from "../utils/activeUsers.js";
 
 // -----------------------------------------
 // 1️⃣ GET PENDING MAINTENANCE TASKS
@@ -39,7 +40,7 @@ export const getPendingMaintenanceTasks = async (req, res) => {
             WHEN LOWER(t.frequency) LIKE '%end-of%week%' THEN CURRENT_DATE + INTERVAL '7 days'
             ELSE CURRENT_DATE + INTERVAL '1 day'
         END`;
-
+        where += activeDoerClause('t.name');
 
 
         // ⭐ Status Filter (Today, Overdue, Upcoming, Leave, Day off)

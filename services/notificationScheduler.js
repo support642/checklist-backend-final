@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import pool from '../config/db.js';
+import { activeDoerClause } from '../utils/activeUsers.js';
 import { sendTaskOverdueSummaryNotification, sendDailyManagementSummary } from './whatsappService.js';
 
 /**
@@ -18,6 +19,7 @@ export const processOverdueReminders = async () => {
       WHERE submission_date IS NULL 
         AND task_start_date::date < CURRENT_DATE
         AND (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive'))
+        ${activeDoerClause('checklist.name')}
     `;
 
     // Maintenance tasks
@@ -27,6 +29,7 @@ export const processOverdueReminders = async () => {
       WHERE submission_date IS NULL 
         AND task_start_date::date < CURRENT_DATE
         AND (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive'))
+        ${activeDoerClause('maintenance_tasks.name')}
     `;
 
     // Delegation tasks
@@ -36,6 +39,7 @@ export const processOverdueReminders = async () => {
       WHERE submission_date IS NULL 
         AND planned_date::date < CURRENT_DATE
         AND (status IS NULL OR (LOWER(status::text) <> 'leave' AND LOWER(status::text) <> 'inactive'))
+        ${activeDoerClause('delegation.name')}
     `;
 
     const [checklistRes, maintenanceRes, delegationRes] = await Promise.all([
@@ -270,8 +274,7 @@ export const initOverdueScheduler = () => {
         UPDATE users 
         SET leave_date = NULL, 
             leave_end_date = NULL,
-            remark = NULL,
-            status = 'active'
+            remark = NULL
         WHERE leave_end_date IS NOT NULL 
           AND leave_end_date::date < CURRENT_DATE
       `);

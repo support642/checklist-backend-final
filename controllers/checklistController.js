@@ -2,6 +2,7 @@ import pool from "../config/db.js";
 import upload, { uploadToS3 } from "../middleware/s3Upload.js";
 import { sendUrgentTaskEmail } from "../services/emailService.js";
 import whatsappService from "../services/whatsappService.js";
+import { activeDoerClause } from "../utils/activeUsers.js";
 // -----------------------------------------
 // 1️⃣ GET PENDING CHECKLIST
 export const getPendingChecklist = async (req, res) => {
@@ -23,6 +24,7 @@ export const getPendingChecklist = async (req, res) => {
 
     // Base filter for pending tasks
     let where = `submission_date IS NULL`;
+    where += activeDoerClause('checklist.name');
 
     where += ` AND DATE(task_start_date) <= CASE 
       WHEN LOWER(frequency) = 'daily' THEN CURRENT_DATE + INTERVAL '1 day'

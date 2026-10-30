@@ -65,9 +65,8 @@ export const getUsers = async (req, res) => {
       UPDATE users 
       SET leave_date = NULL, 
           leave_end_date = NULL,
-          remark = NULL,
-          status = 'active'
-      WHERE leave_end_date IS NOT NULL 
+          remark = NULL
+      WHERE leave_end_date IS NOT NULL
         AND leave_end_date::date < CURRENT_DATE
     `);
 
@@ -290,6 +289,13 @@ export const updateUser = async (req, res) => {
 
     const result = await pool.query(query, values);
     const updatedUser = result.rows[0];
+
+    // Keep existing tasks linked to the user when their name changes (tasks store the name as text)
+    if (oldUserName && updatedUser.user_name && updatedUser.user_name !== oldUserName) {
+      for (const table of ["checklist", "delegation", "maintenance_tasks"]) {
+        await pool.query(`UPDATE ${table} SET name = $1 WHERE name = $2`, [updatedUser.user_name, oldUserName]);
+      }
+    }
 
     // Force log out the user across devices, handling if their username changed
     if (oldUserName) triggerUserLogout(oldUserName);
