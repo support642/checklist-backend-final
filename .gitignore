@@ -8,7 +8,7 @@ node_modules/
 .env.test.local
 .env.production.local
 
-# Logs
+# Logs and
 logs
 *.log
 npm-debug.log*
