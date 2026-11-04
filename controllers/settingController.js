@@ -297,11 +297,11 @@ export const updateUser = async (req, res) => {
       }
     }
 
-    // Force log out the user across devices, handling if their username changed
-    if (oldUserName) triggerUserLogout(oldUserName);
-    if (updatedUser.user_name && updatedUser.user_name !== oldUserName) {
-      triggerUserLogout(updatedUser.user_name);
-    }
+    // Force log out the edited user so new permissions apply, but never the admin doing the edit
+    const actingUser = req.user?.username;
+    const namesToLogout = new Set([oldUserName, updatedUser.user_name].filter(Boolean));
+    namesToLogout.delete(actingUser);
+    namesToLogout.forEach((name) => triggerUserLogout(name));
 
     res.json(updatedUser);
   } catch (error) {
