@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { activeDoerClause } from "../utils/activeUsers.js";
 
 const formatLocalYMD = (date) => {
   const y = date.getFullYear();
@@ -110,7 +111,7 @@ export const getStaffTasks = async (req, res) => {
         ) AS overdue_tasks,
         SUM(
           CASE 
-             WHEN t.submission_date IS NOT NULL AND t.submission_date <= t.${dateCol}
+             WHEN t.submission_date IS NOT NULL AND t.submission_date::date <= t.${dateCol}::date
              THEN 1 
              WHEN t.submission_date IS NULL AND ${completedCondition} AND t.${dateCol} <= NOW()
              THEN 1
@@ -119,14 +120,14 @@ export const getStaffTasks = async (req, res) => {
         ) AS done_on_time,
         AVG(
           CASE 
-             WHEN t.submission_date IS NOT NULL AND t.submission_date > t.${dateCol}
+             WHEN t.submission_date IS NOT NULL AND t.submission_date::date > t.${dateCol}::date
              THEN EXTRACT(EPOCH FROM (t.submission_date - t.${dateCol})) / 86400.0
              ELSE 0
           END
         ) AS avg_delay_days,
         COUNT(DISTINCT t.${dateCol}::date) AS total_assigned_days,
         COUNT(DISTINCT CASE 
-          WHEN (t.submission_date IS NOT NULL AND t.submission_date <= t.${dateCol})
+          WHEN (t.submission_date IS NOT NULL AND t.submission_date::date <= t.${dateCol}::date)
             OR (t.submission_date IS NULL AND ${completedCondition} AND t.${dateCol} <= NOW())
           THEN t.${dateCol}::date 
         END) AS present_days
@@ -137,6 +138,11 @@ export const getStaffTasks = async (req, res) => {
       AND t.${dateCol} IS NOT NULL
       AND (t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))
     `;
+
+    // Exclude tasks whose doer is not an existing, active user
+    if (table === "checklist") {
+      query += activeDoerClause("t.name");
+    }
 
     if (userRole === "DIV_ADMIN" && unit && division) {
       query += ` AND LOWER(u.unit) = LOWER($${paramCount}) AND LOWER(u.division) = LOWER($${paramCount + 1})`;
@@ -354,7 +360,7 @@ export const getStaffDetails = async (req, res) => {
       onTimeClause = "(t.status = 'Done')";
     } else if (table === 'checklist') {
       completionClause = "(t.status = 'yes')";
-      onTimeClause = "(t.submission_date IS NOT NULL AND t.delay <= interval '0')";
+      onTimeClause = "(t.submission_date IS NOT NULL AND t.submission_date::date <= t.task_start_date::date)";
     } else if (table === 'delegation') {
       onTimeClause = "(t.color_code_for = '1' OR t.color_code_for = 1)";
     }
