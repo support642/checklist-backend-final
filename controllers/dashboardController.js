@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { activeDoerClause } from "../utils/activeUsers.js";
 
 const formatLocalYMD = (date) => {
   const y = date.getFullYear();
@@ -1434,6 +1435,10 @@ export const getDashboardSummaryCounts = async (req, res) => {
       }
     }
 
+    // Exclude tasks whose doer is not an existing, active user
+    if (dashboardType === "checklist") {
+      filterQuery += activeDoerClause("t.name");
+    }
     let query = "";
 
     if (dashboardType === "delegation") {
@@ -1726,6 +1731,10 @@ export const getDepartmentReportSummary = async (req, res) => {
       }
     }
 
+    // Exclude tasks whose doer is not an existing, active user
+    if (dashboardType === "checklist") {
+      filterQuery += activeDoerClause("t.name");
+    }
     let query = "";
 
     if (dashboardType === "delegation") {
