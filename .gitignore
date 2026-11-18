@@ -54,3 +54,4 @@ package-lock.json
 
 *.sql
 CI_CD_PIPELINE.md
+!migrations/*.sql
