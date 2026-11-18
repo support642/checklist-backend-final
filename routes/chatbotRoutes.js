@@ -21,6 +21,10 @@ import chatbotAdminMiddleware from "../middleware/chatbotAdminMiddleware.js";
 
 const router = express.Router();
 
+// The AI chatbot is only for administrators (super_admin, div_admin, admin).
+// Role is read from the database, so normal users are blocked on EVERY route.
+router.use(chatbotAdminMiddleware);
+
 
 // ==========================================
 // Employee APIs

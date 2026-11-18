@@ -48,7 +48,7 @@ const chatbotAdminMiddleware = async (req, res, next) => {
         if (!allowedRoles.includes(employeeRole)) {
             return res.status(403).json({
                 success: false,
-                message: "You are not authorized to access admin reports."
+                message: "The AI assistant is available only for administrators."
             });
         }
 
