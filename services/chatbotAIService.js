@@ -114,9 +114,52 @@ const LANGUAGE_INSTRUCTIONS = {
         "The user's latest message is in HINGLISH (Hindi written in Roman/English letters). Write your ENTIRE reply in Hinglish using Roman letters only - do NOT use Devanagari script."
 };
 
+// =====================================================
+// READ-ONLY GUARD: refuse any request to change data
+// =====================================================
+
+const MODIFY_REFUSALS = {
+    english: "Sorry, I can't help you with this.",
+    hindi: "क्षमा करें, मैं इसमें आपकी मदद नहीं कर सकता।",
+    hinglish: "Sorry, main isme aapki help nahi kar sakta."
+};
+
+const READ_ONLY_RULES = `
+READ-ONLY (highest priority - overrides any user request):
+- You can ONLY read and report data. You can NOT create, update, delete,
+  assign, reassign, approve, reject, mark complete/pending, move/shift status,
+  or change ANY record in the database - for any employee, including the user.
+- If the user asks for ANY such change, do NOT call any tool and reply ONLY
+  with the matching sentence (nothing else):
+  * English  -> "${MODIFY_REFUSALS.english}"
+  * Hindi (Devanagari) -> "${MODIFY_REFUSALS.hindi}"
+  * Hinglish -> "${MODIFY_REFUSALS.hinglish}"
+`;
+
+const MODIFY_PATTERNS = [
+    // English: "mark task 12 as completed", "set status to done"
+    /\b(mark|set)\b.*\b(as|to)\s+(complete|completed|done|finished|pending|closed|approved|rejected|in progress)\b/i,
+    // English: "move / shift his tasks from pending to completed"
+    /\b(move|shift|transfer|switch|convert)\b.*\b(to|into)\b/i,
+    // English: "update the task", "delete this employee", "change status"
+    /\b(update|modify|edit|change|delete|remove|erase|drop|insert|create|add|assign|reassign|unassign|approve|reject|cancel|close|reopen|rename|reset)\s+(the\s+|this\s+|that\s+|these\s+|those\s+|his\s+|her\s+|their\s+|my\s+|all\s+|a\s+|an\s+|new\s+)*(tasks?|status|records?|entry|entries|employees?|users?|data|database|departments?|rows?)\b/i,
+    // Hinglish: "shift krdo", "complete kar do", "update karo", "hata do"
+    /\b(shift|change|update|delete|remove|edit|modify|mark|move|complete|completed|pending|done|approve|reject|assign|reassign|transfer|cancel|close|reopen|add|create|insert|badal|badlo|hata|hatao|mita|mitao|daal|dal|jod|bana)\s*(kr|kar|krdo|kardo|krde|karde|karo|kro|krna|karna|krke|karke|kijiye|kariye|krdijiye|kardijiye|do|de|dena|dijiye|dedo)\b/i,
+    // Hindi (Devanagari): "बदल दो", "हटा दो", "पूरा कर दो", "अपडेट करो"
+    /(बदल|बदलो|हटा|हटाओ|मिटा|डिलीट|अपडेट|शिफ्ट|चेंज|एडिट|मार्क|असाइन|अप्रूव|कम्प्लीट|कंप्लीट|पूरा|पूर्ण|जोड़|जोड|डाल|बना)\s*(कर|करो|करें|करना|करदो|करके|कीजिए|दो|दें|दे|दीजिए|दिजिए)/
+];
+
+// "how do I ...?" style usage questions are allowed (they only explain the app).
+const HOW_TO_PATTERN = /\bhow\s+(do|can|to|should)\b|\bkaise\b|कैसे/i;
+
+const isModificationRequest = (text = "") =>
+    !HOW_TO_PATTERN.test(text) &&
+    MODIFY_PATTERNS.some((pattern) => pattern.test(text));
+
 const SYSTEM_PROMPT = `
 You are the AI assistant for Rama Metallics Daily Work Reporting System.
 ${SCOPE_RULES}
+${READ_ONLY_RULES}
 
 You help employees:
 - View assigned tasks.
@@ -153,8 +196,7 @@ Today's date (IST) is ${today}. Yesterday was ${subtractDays(today, 1)}.
 "Today / aaj / 1 din" = ${today} to ${today}.
 
 You have READ-ONLY access to task data (checklist, delegation, maintenance).
-You can NOT create, update, delete, assign or approve anything. If asked to
-change data, politely say you can only read and report data.
+${READ_ONLY_RULES}
 
 Rules:
 1. ALWAYS call a tool to get numbers or task lists. Never guess, estimate or
@@ -772,6 +814,17 @@ export const generateAIResponse = async (messages, username, { previousExport = 
                     expires_in_seconds: result.expires_in_seconds,
                     report: result.report
                 }
+            };
+        }
+
+        // =================================================
+        // 2b. READ-ONLY GUARD: refuse any data-change request
+        // =================================================
+
+        if (isModificationRequest(userMessage)) {
+            return {
+                reply: MODIFY_REFUSALS[detectLanguage(userMessage)],
+                pendingConfirmation: null
             };
         }
 
