@@ -1,4 +1,6 @@
-﻿CREATE TABLE public.chatbot_report_confirmations (
+﻿BEGIN;
+
+CREATE TABLE public.chatbot_report_confirmations (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     token_hash varchar(64) NOT NULL UNIQUE,
     username text NOT NULL,
@@ -39,13 +41,10 @@
     CONSTRAINT chatbot_report_confirmations_report_id_fkey
         FOREIGN KEY (report_id)
         REFERENCES public.working_date_history(id)
-        ON DELETE RESTRICT,
+        ON DELETE CASCADE
 
-    CONSTRAINT chatbot_report_confirmations_username_fkey
-        FOREIGN KEY (username)
-        REFERENCES public.users(user_name)
-        ON UPDATE CASCADE
-        ON DELETE RESTRICT
+    -- No FK on username: users.user_name is not UNIQUE and users are hard-deleted.
+    -- The service validates the active user before insert/confirm.
 );
 
 CREATE INDEX idx_chatbot_confirmations_pending_expiry
@@ -54,3 +53,5 @@ CREATE INDEX idx_chatbot_confirmations_pending_expiry
 
 CREATE INDEX idx_chatbot_confirmations_username
     ON public.chatbot_report_confirmations(username, created_at DESC);
+
+COMMIT;

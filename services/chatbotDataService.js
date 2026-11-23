@@ -27,37 +27,154 @@ const MAX_RANGE_DAYS = 366;
 const MAX_LIST_LIMIT = 50;
 const MAX_EMPLOYEE_ROWS = 50;
 
-const TASK_SOURCES = {
-    checklist: {
-        table: "checklist",
-        idCol: "task_id",
-        dateCol: "task_start_date",
-        hasTimeZone: false,
-        completedExtra: "AND LOWER(COALESCE(t.status::text, '')) = 'yes'",
-        notDone:
-            "t.submission_date IS NOT NULL AND (t.status IS NULL OR LOWER(t.status::text) = 'no')"
-    },
-    delegation: {
-        table: "delegation",
-        idCol: "task_id",
-        dateCol: "planned_date",
-        hasTimeZone: false,
-        completedExtra: "",
-        notDone: "FALSE"
-    },
-    maintenance: {
-        table: "maintenance_tasks",
-        idCol: "id",
-        dateCol: "task_start_date",
-        hasTimeZone: true,
-        completedExtra: "",
-        notDone: "FALSE"
-    }
-};
+// Same SQL as utils/activeUsers.js#activeDoerClause (the dashboard applies it to checklist).
+const ACTIVE_DOER_SQL = `EXISTS (
+            SELECT 1 FROM users au
+            WHERE LOWER(TRIM(au.user_name)) = LOWER(TRIM(t.name))
+              AND LOWER(COALESCE(au.status::text, 'active')) = 'active')`;
 
-const TASK_TYPES = ["all", ...Object.keys(TASK_SOURCES)];
-const STATUS_FILTERS = ["all", "pending", "overdue", "due_today", "completed", "not_done"];
-const SORT_FIELDS = ["pending", "overdue", "completed", "total", "completion_rate"];
+const CHECKLIST_PLANNED = "NULLIF(TRIM(t.planned_date), '')::timestamp";
+
+// One entry per UNION branch. Each branch is normalised to the same columns.
+// "on time" rules are copied from dashboardController.getDashboardSummaryCounts:
+//   checklist   -> completed AND submission date <= planned date
+//   delegation  -> submitted AND color_code_for = 1
+//   maintenance -> submitted AND status = 'Done'
+// Like the dashboard, the checklist type also counts completed daily work
+// reports (working_date_history) as completed, on-time checklist entries.
+const TASK_BRANCHES = [
+    {
+        taskType: "checklist",
+        source: "checklist",
+        from: "checklist t",
+        dateCol: "t.task_start_date",
+        hasTimeZone: false,
+        activeDoerOnly: true,
+        cols: {
+            taskId: "t.task_id::text",
+            description: "t.task_description",
+            givenBy: "t.given_by",
+            frequency: "t.frequency",
+            planned: CHECKLIST_PLANNED,
+            submission: "t.submission_date",
+            completed: "t.submission_date IS NOT NULL AND LOWER(COALESCE(t.status::text, '')) = 'yes'",
+            notDone: "t.submission_date IS NOT NULL AND (t.status IS NULL OR LOWER(t.status::text) = 'no')",
+            onTime:
+                "t.submission_date IS NOT NULL AND LOWER(COALESCE(t.status::text, '')) = 'yes' " +
+                `AND ${CHECKLIST_PLANNED} IS NOT NULL AND t.submission_date::date <= ${CHECKLIST_PLANNED}::date`,
+            delay: "t.delay::text",
+            remarks: "t.remark",
+            approval: "t.admin_done",
+            submittedBy: "t.submitted_by",
+            approvedBy: "t.approved_by",
+            machine: "NULL",
+            extendCount: "NULL"
+        }
+    },
+    {
+        taskType: "checklist",
+        source: "work_report",
+        from: `(
+            SELECT w.id, w.user_name AS name, w.department, w.unit, w.division,
+                   w.work_details, w.assign_by, w.work_datetime, w.status
+            FROM working_date_history w
+            WHERE LOWER(COALESCE(w.status, '')) = 'completed'
+        ) t`,
+        dateCol: "t.work_datetime",
+        hasTimeZone: false,
+        activeDoerOnly: true,
+        cols: {
+            taskId: "'WR-' || t.id::text",
+            description: "t.work_details",
+            givenBy: "t.assign_by",
+            frequency: "'DAILY'",
+            planned: "t.work_datetime",
+            submission: "t.work_datetime",
+            completed: "TRUE",
+            notDone: "FALSE",
+            onTime: "TRUE",
+            delay: "'00:00:00'",
+            remarks: "NULL",
+            approval: "NULL",
+            submittedBy: "t.name",
+            approvedBy: "NULL",
+            machine: "NULL",
+            extendCount: "NULL"
+        }
+    },
+    {
+        taskType: "delegation",
+        source: "delegation",
+        from: `delegation t
+            LEFT JOIN (
+                SELECT
+                    task_id,
+                    COUNT(*) FILTER (WHERE status::text = 'extend')::int AS extend_count,
+                    (ARRAY_AGG(admin_done ORDER BY created_at DESC)
+                        FILTER (WHERE status::text = 'completed'))[1] AS approval,
+                    (ARRAY_AGG(approved_by ORDER BY created_at DESC)
+                        FILTER (WHERE status::text = 'completed'))[1] AS approved_by
+                FROM delegation_done
+                GROUP BY task_id
+            ) dd ON dd.task_id = t.task_id`,
+        dateCol: "t.planned_date",
+        hasTimeZone: false,
+        activeDoerOnly: false,
+        cols: {
+            taskId: "t.task_id::text",
+            description: "t.task_description",
+            givenBy: "t.given_by",
+            frequency: "t.frequency",
+            planned: "t.planned_date",
+            submission: "t.submission_date",
+            completed: "t.submission_date IS NOT NULL",
+            notDone: "FALSE",
+            onTime: "t.submission_date IS NOT NULL AND t.color_code_for = 1",
+            delay: "t.delay::text",
+            remarks: "t.remarks",
+            approval: "dd.approval",
+            submittedBy: "t.submitted_by",
+            approvedBy: "dd.approved_by",
+            machine: "NULL",
+            extendCount: "COALESCE(dd.extend_count, 0)"
+        }
+    },
+    {
+        taskType: "maintenance",
+        source: "maintenance",
+        from: "maintenance_tasks t",
+        dateCol: "t.task_start_date",
+        hasTimeZone: true,
+        activeDoerOnly: false,
+        cols: {
+            taskId: "t.id::text",
+            description: "t.task_description",
+            givenBy: "t.given_by",
+            frequency: "t.frequency",
+            planned: "(t.planned_date AT TIME ZONE 'Asia/Kolkata')",
+            submission: "(t.submission_date AT TIME ZONE 'Asia/Kolkata')",
+            completed: "t.submission_date IS NOT NULL",
+            notDone: "FALSE",
+            onTime: "t.submission_date IS NOT NULL AND t.status = 'Done'",
+            delay: "t.delay",
+            remarks: "t.remarks",
+            approval: "t.admin_done",
+            submittedBy: "t.submitted_by",
+            approvedBy: "t.approved_by",
+            machine: "t.machine_name",
+            extendCount: "NULL"
+        }
+    }
+];
+
+const TASK_TYPES = ["all", ...new Set(TASK_BRANCHES.map((b) => b.taskType))];
+const STATUS_FILTERS = [
+    "all", "pending", "overdue", "due_today", "completed", "not_done",
+    "on_time", "late", "extended"
+];
+const SORT_FIELDS = [
+    "pending", "overdue", "completed", "total", "completion_rate", "on_time", "late", "extended"
+];
 
 
 // =====================================================================
@@ -357,39 +474,53 @@ const buildTasksCte = (profile, filters) => {
     if (unit) shared.push(`LOWER(TRIM(t.unit)) = LOWER(TRIM(${add(unit)}))`);
     if (division) shared.push(`LOWER(TRIM(t.division)) = LOWER(TRIM(${add(division)}))`);
 
-    const sources = taskType === "all" ? Object.keys(TASK_SOURCES) : [taskType];
+    const selected = TASK_BRANCHES.filter(
+        (b) => taskType === "all" || b.taskType === taskType
+    );
 
-    const branches = sources.map((key) => {
-        const s = TASK_SOURCES[key];
-        const col = `t.${s.dateCol}`;
-        const dateExpr = s.hasTimeZone ? `(${col} AT TIME ZONE 'Asia/Kolkata')::date` : `${col}::date`;
+    const branches = selected.map((b) => {
+        const c = b.cols;
+        const col = b.dateCol;
+        const dateExpr = b.hasTimeZone ? `(${col} AT TIME ZONE 'Asia/Kolkata')::date` : `${col}::date`;
         // Range on the raw column for timestamp tables keeps it index-friendly.
-        const rangeSql = s.hasTimeZone
+        const rangeSql = b.hasTimeZone
             ? `${dateExpr} BETWEEN ${startP}::date AND ${endP}::date`
             : `${col} >= ${startP}::date AND ${col} < (${endP}::date + 1)`;
 
         const where = [
             "(t.status IS NULL OR LOWER(t.status::text) NOT IN ('leave', 'inactive'))",
             rangeSql,
+            ...(b.activeDoerOnly ? [ACTIVE_DOER_SQL] : []),
             ...shared
         ].join("\n          AND ");
 
         return `
         SELECT
-            '${key}'::text AS task_type,
-            t.${s.idCol}::text AS task_id,
+            '${b.taskType}'::text AS task_type,
+            '${b.source}'::text AS source,
+            (${c.taskId})::text AS task_id,
             TRIM(t.name) AS employee,
             t.department,
             t.unit,
             t.division,
-            t.task_description,
-            t.given_by,
-            t.frequency,
+            (${c.description})::text AS task_description,
+            (${c.givenBy})::text AS given_by,
+            (${c.frequency})::text AS frequency,
             ${dateExpr} AS task_date,
-            t.submission_date,
-            (t.submission_date IS NOT NULL ${s.completedExtra}) AS is_completed,
-            (${s.notDone}) AS is_not_done
-        FROM ${s.table} t
+            (${c.planned})::timestamp AS planned_at,
+            (${c.submission})::timestamp AS submission_date,
+            COALESCE(${c.completed}, FALSE) AS is_completed,
+            COALESCE(${c.notDone}, FALSE) AS is_not_done,
+            COALESCE(${c.onTime}, FALSE) AS is_on_time,
+            t.status::text AS raw_status,
+            (${c.delay})::text AS delay,
+            (${c.remarks})::text AS remarks,
+            (${c.approval})::text AS approval,
+            (${c.submittedBy})::text AS submitted_by,
+            (${c.approvedBy})::text AS approved_by,
+            (${c.machine})::text AS machine_name,
+            (${c.extendCount})::int AS extend_count
+        FROM ${b.from}
         WHERE ${where}`;
     });
 
@@ -402,11 +533,18 @@ const countColumns = (todayP) => `
     COUNT(*) FILTER (WHERE submission_date IS NULL)::int AS pending,
     COUNT(*) FILTER (WHERE submission_date IS NULL AND task_date < ${todayP}::date)::int AS overdue,
     COUNT(*) FILTER (WHERE submission_date IS NULL AND task_date = ${todayP}::date)::int AS due_today,
-    COUNT(*) FILTER (WHERE is_not_done)::int AS not_done`;
+    COUNT(*) FILTER (WHERE is_not_done)::int AS not_done,
+    COUNT(*) FILTER (WHERE is_completed AND is_on_time)::int AS on_time,
+    COUNT(*) FILTER (WHERE is_completed AND NOT is_on_time)::int AS late,
+    COUNT(*) FILTER (WHERE extend_count > 0)::int AS extended`;
 
+const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
+
+// on_time_rate_percent = on_time / completed, the same ratio as the dashboard's "On Time" card.
 const withRate = (row) => ({
     ...row,
-    completion_rate_percent: row.total > 0 ? Math.round((row.completed / row.total) * 1000) / 10 : 0
+    completion_rate_percent: pct(row.completed, row.total),
+    on_time_rate_percent: pct(row.on_time, row.completed)
 });
 
 const readCommonFilters = async (args, profile) => {
@@ -470,7 +608,10 @@ export const getTaskSummary = async (args, profile) => {
         params
     );
 
-    const empty = { total: 0, completed: 0, pending: 0, overdue: 0, due_today: 0, not_done: 0 };
+    const empty = {
+        total: 0, completed: 0, pending: 0, overdue: 0, due_today: 0, not_done: 0,
+        on_time: 0, late: 0, extended: 0
+    };
     const combined = rows.reduce((acc, r) => {
         for (const k of Object.keys(empty)) acc[k] += r[k];
         return acc;
@@ -481,7 +622,7 @@ export const getTaskSummary = async (args, profile) => {
         filters: describeFilters(filters),
         access_scope: describeScope(profile),
         definitions:
-            "pending = not yet submitted (includes overdue and due_today); overdue = pending with task date before today; completed = submitted (checklist: marked yes); not_done = checklist submitted as 'no'.",
+            "pending = not yet submitted (includes overdue and due_today); overdue = pending with task date before today; completed = submitted (checklist: marked yes); not_done = checklist submitted as 'no'; on_time / late = completed tasks done on time / late (dashboard rules: checklist submitted on or before planned date, delegation color code 1, maintenance status Done); on_time_rate_percent = on_time / completed (same as the dashboard On Time %); extended = delegation tasks that were extended at least once. Checklist counts include completed daily work reports, exactly like the dashboard.",
         overall: withRate(combined),
         by_task_type: rows.map(withRate)
     };
@@ -546,8 +687,17 @@ const STATUS_SQL = {
     overdue: "submission_date IS NULL AND task_date < $TODAY::date",
     due_today: "submission_date IS NULL AND task_date = $TODAY::date",
     completed: "is_completed",
-    not_done: "is_not_done"
+    not_done: "is_not_done",
+    on_time: "is_completed AND is_on_time",
+    late: "is_completed AND NOT is_on_time",
+    extended: "extend_count > 0"
 };
+
+// Drops null / empty fields so the AI gets compact rows.
+const compactRow = (row) =>
+    Object.fromEntries(
+        Object.entries(row).filter(([, v]) => v !== null && v !== undefined && v !== "")
+    );
 
 export const MAX_EXPORT_ROWS = 5000;
 
@@ -568,17 +718,25 @@ export const listTasks = async (args, profile, { maxLimit = MAX_LIST_LIMIT } = {
     const { rows } = await pool.query(
         `${cte}
         SELECT
-            task_type, task_id, employee, department, task_description, given_by, frequency,
+            task_type,
+            NULLIF(source, task_type) AS source,
+            task_id, employee, department, task_description, given_by, frequency,
             to_char(task_date, 'YYYY-MM-DD') AS task_date,
+            to_char(planned_at, 'YYYY-MM-DD HH24:MI') AS planned_date,
             to_char(submission_date, 'YYYY-MM-DD HH24:MI') AS submitted_at,
             CASE
                 WHEN is_not_done THEN 'not_done'
                 WHEN is_completed THEN 'completed'
                 WHEN submission_date IS NOT NULL THEN 'submitted'
+                WHEN raw_status = 'extend' THEN 'extended_pending'
                 WHEN task_date < ${todayP}::date THEN 'overdue'
                 WHEN task_date = ${todayP}::date THEN 'due_today'
                 ELSE 'upcoming'
             END AS current_status,
+            CASE WHEN is_completed THEN (CASE WHEN is_on_time THEN 'on_time' ELSE 'late' END) END AS timeliness,
+            NULLIF(delay, '00:00:00') AS delay,
+            NULLIF(extend_count, 0) AS times_extended,
+            remarks, approval, submitted_by, approved_by, machine_name,
             COUNT(*) OVER ()::int AS total_matching
         FROM tasks
         WHERE ${statusSql}
@@ -598,7 +756,7 @@ export const listTasks = async (args, profile, { maxLimit = MAX_LIST_LIMIT } = {
         note: totalMatching > rows.length
             ? `Only the latest ${rows.length} of ${totalMatching} matching tasks are listed. Use get_task_summary / get_employee_wise_summary for full counts.`
             : undefined,
-        tasks: rows.map(({ total_matching, ...r }) => r)
+        tasks: rows.map(({ total_matching, ...r }) => compactRow(r))
     };
 };
 
@@ -718,4 +876,208 @@ export const listDepartments = async (args, profile) => {
     );
 
     return { success: true, access_scope: describeScope(profile), departments: rows };
+};
+
+
+// Shared optional filters for the tools below: employee, department, unit, division.
+// Returns { where, failure } with conditions on `alias` appended to `params`.
+const buildPersonFilters = async (args, profile, params, alias, nameCol = "name") => {
+    const where = buildScope(profile, params, alias);
+
+    if (args.employee_name) {
+        const resolved = await resolveEmployee(args.employee_name, profile);
+        if (resolved.error) {
+            return { failure: { success: false, message: resolved.error, candidates: resolved.candidates } };
+        }
+        params.push(resolved.name);
+        where.push(`LOWER(TRIM(${alias}.${nameCol})) = LOWER(TRIM($${params.length}))`);
+    }
+
+    const dept = await resolveDepartment(args.department, profile);
+    if (dept.error) {
+        return { failure: { success: false, message: dept.error, candidates: dept.candidates } };
+    }
+    if (dept.department) {
+        params.push(dept.department);
+        where.push(`LOWER(TRIM(${alias}.department)) = LOWER(TRIM($${params.length}))`);
+    }
+
+    if (profile.role === "super_admin") {
+        for (const key of ["unit", "division"]) {
+            const value = cleanText(args[key]);
+            if (value) {
+                params.push(value);
+                where.push(`LOWER(TRIM(${alias}.${key})) = LOWER(TRIM($${params.length}))`);
+            }
+        }
+    }
+
+    return { where, department: dept.department };
+};
+
+
+// =====================================================================
+// TOOL 6: Extended delegation tasks (delegation_done, status 'extend')
+// =====================================================================
+
+const EXTENDED_STATUS = ["all", "pending", "completed"];
+
+export const listExtendedDelegations = async (args, profile, { maxLimit = MAX_LIST_LIMIT } = {}) => {
+    assertAdmin(profile);
+    const { startDate, endDate, today } = resolveDateRange(args);
+    const status = pickEnum(args.status, EXTENDED_STATUS, "all", "status");
+    const limit = clampLimit(args.limit, 20, maxLimit);
+
+    const params = [startDate, endDate];
+    const filters = await buildPersonFilters(args, profile, params, "d");
+    if (filters.failure) return filters.failure;
+
+    const where = [...filters.where];
+    if (status === "pending") where.push("d.submission_date IS NULL");
+    if (status === "completed") where.push("d.submission_date IS NOT NULL");
+
+    params.push(today);
+    const todayP = `$${params.length}`;
+    params.push(limit);
+    const limitP = `$${params.length}`;
+
+    // An extension is counted in the range by the date it was requested.
+    const { rows } = await pool.query(
+        `WITH ext AS (
+            SELECT
+                dd.task_id,
+                COUNT(*)::int AS extend_count,
+                MAX(dd.created_at) AS last_extended_at,
+                (ARRAY_AGG(dd.next_extend_date ORDER BY dd.created_at DESC))[1] AS extended_to,
+                (ARRAY_AGG(dd.reason ORDER BY dd.created_at DESC))[1] AS last_reason
+            FROM delegation_done dd
+            WHERE dd.status::text = 'extend'
+              AND (dd.created_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $1::date AND $2::date
+            GROUP BY dd.task_id
+        )
+        SELECT
+            d.task_id::text AS task_id,
+            TRIM(d.name) AS employee,
+            d.department,
+            d.task_description,
+            d.given_by,
+            e.extend_count AS times_extended,
+            to_char(e.last_extended_at AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') AS last_extended_on,
+            to_char(e.extended_to, 'YYYY-MM-DD HH24:MI') AS extended_to,
+            e.last_reason AS extension_reason,
+            to_char(d.planned_date, 'YYYY-MM-DD HH24:MI') AS current_planned_date,
+            to_char(d.submission_date, 'YYYY-MM-DD HH24:MI') AS submitted_at,
+            CASE
+                WHEN d.submission_date IS NOT NULL THEN
+                    CASE WHEN d.color_code_for = 1 THEN 'completed_on_time' ELSE 'completed_late' END
+                WHEN d.planned_date::date < ${todayP}::date THEN 'overdue'
+                WHEN d.status = 'extend' THEN 'extended_pending'
+                ELSE 'pending'
+            END AS current_status,
+            COUNT(*) OVER ()::int AS total_matching,
+            SUM(e.extend_count) OVER ()::int AS total_extensions,
+            COUNT(*) FILTER (WHERE d.submission_date IS NULL) OVER ()::int AS still_pending
+        FROM ext e
+        JOIN delegation d ON d.task_id = e.task_id
+        ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+        ORDER BY e.last_extended_at DESC
+        LIMIT ${limitP}`,
+        params
+    );
+
+    const first = rows[0] || {};
+
+    return {
+        success: true,
+        filters: {
+            start_date: startDate,
+            end_date: endDate,
+            date_basis: "date the extension was requested",
+            status,
+            employee: args.employee_name || "all",
+            department: filters.department || "all"
+        },
+        access_scope: describeScope(profile),
+        extended_tasks: first.total_matching || 0,
+        total_extensions: first.total_extensions || 0,
+        still_pending: first.still_pending || 0,
+        showing: rows.length,
+        tasks: rows.map(({ total_matching, total_extensions, still_pending, ...r }) => compactRow(r))
+    };
+};
+
+
+// =====================================================================
+// TOOL 7: Employees' daily work reports (working_date_history)
+// =====================================================================
+
+const WORK_REPORT_STATUS = ["all", "completed", "in progress", "pending"];
+
+export const getWorkReports = async (args, profile, { maxLimit = MAX_LIST_LIMIT } = {}) => {
+    assertAdmin(profile);
+    const { startDate, endDate } = resolveDateRange(args);
+    const status = pickEnum(args.status, WORK_REPORT_STATUS, "all", "status");
+    const limit = clampLimit(args.limit, 20, maxLimit);
+
+    const params = [startDate, endDate];
+    const filters = await buildPersonFilters(args, profile, params, "w", "user_name");
+    if (filters.failure) return filters.failure;
+
+    const where = [
+        "w.work_datetime >= $1::date",
+        "w.work_datetime < ($2::date + 1)",
+        ...filters.where
+    ];
+    if (status !== "all") {
+        params.push(status);
+        where.push(`LOWER(TRIM(COALESCE(w.status, ''))) = $${params.length}`);
+    }
+
+    const whereSql = where.join(" AND ");
+
+    const [summary, list] = await Promise.all([
+        pool.query(
+            `SELECT
+                COUNT(*)::int AS total_reports,
+                COUNT(DISTINCT LOWER(TRIM(w.user_name)))::int AS employees_reporting,
+                COUNT(*) FILTER (WHERE LOWER(w.status) = 'completed')::int AS completed,
+                COUNT(*) FILTER (WHERE LOWER(w.status) = 'in progress')::int AS in_progress,
+                COUNT(*) FILTER (WHERE LOWER(w.status) = 'pending')::int AS pending,
+                COUNT(*) FILTER (WHERE w.status IS NULL OR TRIM(w.status) = '')::int AS no_status
+             FROM working_date_history w
+             WHERE ${whereSql}`,
+            params
+        ),
+        pool.query(
+            `SELECT
+                w.id::text AS report_id,
+                to_char(w.work_datetime, 'YYYY-MM-DD HH24:MI') AS work_datetime,
+                TRIM(w.user_name) AS employee,
+                w.department,
+                LEFT(w.work_details, 300) AS work_details,
+                w.status,
+                w.duration,
+                w.assign_by
+             FROM working_date_history w
+             WHERE ${whereSql}
+             ORDER BY w.work_datetime DESC NULLS LAST
+             LIMIT $${params.length + 1}`,
+            [...params, limit]
+        )
+    ]);
+
+    return {
+        success: true,
+        filters: {
+            start_date: startDate,
+            end_date: endDate,
+            status,
+            employee: args.employee_name || "all",
+            department: filters.department || "all"
+        },
+        access_scope: describeScope(profile),
+        summary: summary.rows[0],
+        showing: list.rows.length,
+        reports: list.rows.map(compactRow)
+    };
 };

@@ -132,7 +132,7 @@ export const adminTools = [
         function: {
             name: "get_task_summary",
             description:
-                "Get task COUNTS (total, completed, pending, overdue, due_today, not_done, completion rate) for the whole organisation, a department, or one employee, over a date range. Use for questions like 'total tasks kitne hain', 'kitne complete hue', 'Rahul ke kitne pending hain'.",
+                "Get task COUNTS (total, completed, pending, overdue, due_today, not_done, on_time, late, extended, completion rate, on-time rate) for the whole organisation, a department, or one employee, over a date range. Numbers follow the dashboard rules. Use for questions like 'total tasks kitne hain', 'kitne complete hue', 'on time kitne hue', 'on time percentage', 'Rahul ke kitne pending hain'.",
             parameters: {
                 type: "object",
                 properties: {
@@ -163,7 +163,7 @@ export const adminTools = [
                     ...orgFilterProps,
                     sort_by: {
                         type: "string",
-                        enum: ["pending", "overdue", "completed", "total", "completion_rate"],
+                        enum: ["pending", "overdue", "completed", "total", "completion_rate", "on_time", "late", "extended"],
                         description: "Ranking field. Default 'pending'."
                     },
                     limit: {
@@ -181,7 +181,7 @@ export const adminTools = [
         function: {
             name: "list_tasks",
             description:
-                "List INDIVIDUAL tasks (description, employee, date, status). Use when the user wants to see which tasks, e.g. 'Rahul ke pending tasks dikhao', 'aaj ke overdue tasks'.",
+                "List INDIVIDUAL tasks with full details: description, employee, department, given_by, frequency, task date, planned date, submitted at, status, on_time/late, delay, times extended, remarks, approval, submitted_by, approved_by, machine (maintenance). Use when the user wants to see which tasks, e.g. 'Rahul ke pending tasks dikhao', 'aaj ke overdue tasks', 'late complete hue tasks', 'delay kitna tha'.",
             parameters: {
                 type: "object",
                 properties: {
@@ -194,8 +194,8 @@ export const adminTools = [
                     ...orgFilterProps,
                     status: {
                         type: "string",
-                        enum: ["all", "pending", "overdue", "due_today", "completed", "not_done"],
-                        description: "Task status filter. Default 'pending'."
+                        enum: ["all", "pending", "overdue", "due_today", "completed", "not_done", "on_time", "late", "extended"],
+                        description: "Task status filter. Default 'pending'. on_time / late = completed on time / late. extended = delegation tasks extended at least once."
                     },
                     limit: {
                         type: "integer",
@@ -243,6 +243,66 @@ export const adminTools = [
             parameters: {
                 type: "object",
                 properties: {},
+                required: [],
+                additionalProperties: false
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "list_extended_delegations",
+            description:
+                "List delegation tasks that were EXTENDED (deadline extension requested), with how many times, extended-to date, reason, current planned date and current status. The date range filters by the date the extension was requested. Use for 'extend wale tasks', 'extended delegation', 'kis task ki date badhi', 'kitne tasks extend hue'.",
+            parameters: {
+                type: "object",
+                properties: {
+                    ...dateRangeProps,
+                    employee_name: {
+                        type: "string",
+                        description: "Optional employee name (full or partial)."
+                    },
+                    ...orgFilterProps,
+                    status: {
+                        type: "string",
+                        enum: ["all", "pending", "completed"],
+                        description: "Current state of the extended task. Default 'all'."
+                    },
+                    limit: {
+                        type: "integer",
+                        description: "Max tasks to return (1-50). Default 20."
+                    }
+                },
+                required: [],
+                additionalProperties: false
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "get_work_reports",
+            description:
+                "Get employees' DAILY WORK REPORTS (working_date_history) over a date range: summary counts (total, employees reporting, completed / in progress / pending) and the report list (date-time, employee, work details, status, duration, assigned by). Use for 'kisne kya kaam kiya', 'work reports dikhao', 'Rahul ki daily report', 'aaj kitne logon ne report bhari'.",
+            parameters: {
+                type: "object",
+                properties: {
+                    ...dateRangeProps,
+                    employee_name: {
+                        type: "string",
+                        description: "Optional employee name (full or partial)."
+                    },
+                    ...orgFilterProps,
+                    status: {
+                        type: "string",
+                        enum: ["all", "completed", "in progress", "pending"],
+                        description: "Report status filter. Default 'all'."
+                    },
+                    limit: {
+                        type: "integer",
+                        description: "Max reports to return (1-50). Default 20."
+                    }
+                },
                 required: [],
                 additionalProperties: false
             }

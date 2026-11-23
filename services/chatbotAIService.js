@@ -195,17 +195,29 @@ Today's date (IST) is ${today}. Yesterday was ${subtractDays(today, 1)}.
 "This month / is mahine" = ${today.slice(0, 8)}01 to ${today}.
 "Today / aaj / 1 din" = ${today} to ${today}.
 
-You have READ-ONLY access to task data (checklist, delegation, maintenance).
+You have READ-ONLY access to task data (checklist, delegation, maintenance),
+delegation extensions and employees' daily work reports.
 ${READ_ONLY_RULES}
 
 Rules:
 1. ALWAYS call a tool to get numbers or task lists. Never guess, estimate or
    invent counts, names or tasks. Only report what tools return.
 2. Pick the right tool:
-   - Counts / totals / completion % -> get_task_summary
+   - Counts / totals / completion % / on-time count and on-time % -> get_task_summary
+     (on_time_rate_percent is the dashboard "On Time" %; it is on_time / completed)
    - Ranking or per-employee comparison -> get_employee_wise_summary
-   - Show actual task names/details -> list_tasks
+   - Show actual task names/details (planned date, delay, remarks, approval,
+     on time or late, times extended) -> list_tasks
+   - Extended / extension / "extend wale" delegation tasks -> list_extended_delegations
+   - Employees' daily work reports ("kisne kya kaam kiya") -> get_work_reports
    - Unsure of a person's or department's exact name -> find_employees / list_departments
+   Any explicit date range the user gives ("1 nov se 15 nov", "between X and Y",
+   "October", "last 3 months") must be passed as start_date / end_date in YYYY-MM-DD.
+   If the user gives a day / month WITHOUT a year, use the current year
+   ${today.slice(0, 4)} (use ${Number(today.slice(0, 4)) - 1} only if that date would be after today).
+   Never use any other year unless the user typed it.
+   A range can be at most 366 days; if the user asks for more, say so and offer
+   to split it.
 3. Dates: "today / aaj / आज / 1 din" means start_date = end_date = ${today}.
    Only when NO time period is mentioned at all, use the current month
    (the tool default, same as the dashboard). Always state the date range you used.
@@ -239,6 +251,57 @@ Rules:
 };
 
 const MAX_TOOL_ROUNDS = 6;
+
+
+// The model sometimes fills a missing year with one from its training data
+// (e.g. "1 nov se 15 nov" -> 2023-11-01). If a tool date uses a year the user
+// never typed, move the range to the current year (or the previous year when
+// that would put the start date in the future).
+const fixUnmentionedYears = (args, messages) => {
+    if (!args || (!args.start_date && !args.end_date && !args.date)) {
+        return args;
+    }
+
+    const userText = messages
+        .filter((m) => m.role === "user")
+        .map((m) => m.content)
+        .join(" ");
+    const mentionedYears = new Set(userText.match(/\b20\d{2}\b/g) || []);
+
+    const today = getISTDate();
+    const currentYear = today.slice(0, 4);
+
+    // "last year / pichle saal / पिछले साल" legitimately points to the previous year.
+    if (/\b(last|previous|past)\s+year\b|\b(pichle|pichhle|pichla|pichhla)\s+(saal|sal|varsh)\b|पिछले\s*साल|पिछला\s*साल/i.test(userText)) {
+        mentionedYears.add(String(Number(currentYear) - 1));
+    }
+    const keys = ["start_date", "end_date", "date"].filter(
+        (k) => typeof args[k] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(args[k])
+    );
+
+    const needsFix = keys.some((k) => {
+        const year = args[k].slice(0, 4);
+        return year !== currentYear && !mentionedYears.has(year);
+    });
+
+    if (!needsFix) return args;
+
+    const firstYear = Number(args[keys[0]].slice(0, 4));
+    const shift = (value, targetYear) => {
+        const year = Number(value.slice(0, 4));
+        return `${targetYear + (year - firstYear)}${value.slice(4)}`;
+    };
+
+    let target = Number(currentYear);
+    const startKey = args.start_date ? "start_date" : keys[0];
+    if (shift(args[startKey], target) > today) target -= 1;
+
+    const fixed = { ...args };
+    for (const k of keys) fixed[k] = shift(args[k], target);
+
+    console.warn(`[chatbot] corrected tool date year: ${JSON.stringify(args)} -> ${JSON.stringify(fixed)}`);
+    return fixed;
+};
 
 
 // =====================================================
@@ -969,9 +1032,14 @@ export const generateAIResponse = async (messages, username, { previousExport = 
                 let toolResult;
 
                 try {
-                    const args = JSON.parse(
-                        toolCall.function.arguments || "{}"
+                    const args = fixUnmentionedYears(
+                        JSON.parse(toolCall.function.arguments || "{}"),
+                        messages
                     );
+
+                    if (process.env.CHATBOT_DEBUG === "1") {
+                        console.log(`[chatbot tool] ${toolName} ${JSON.stringify(args)}`);
+                    }
 
                     if (ADMIN_TOOL_NAMES.includes(toolName)) {
                         if (!isAdmin) {
