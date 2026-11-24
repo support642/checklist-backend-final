@@ -144,18 +144,26 @@ const TASK_BRANCHES = [
         source: "maintenance",
         from: "maintenance_tasks t",
         dateCol: "t.task_start_date",
+        // Maintenance dates are stored as "<date> 23:59 UTC" (= 05:29 IST next day),
+        // so the task date is the UTC date - the same date the dashboard uses.
         hasTimeZone: true,
+        dateZone: "UTC",
         activeDoerOnly: false,
         cols: {
             taskId: "t.id::text",
             description: "t.task_description",
             givenBy: "t.given_by",
             frequency: "t.frequency",
-            planned: "(t.planned_date AT TIME ZONE 'Asia/Kolkata')",
+            planned: "(t.planned_date AT TIME ZONE 'UTC')",
             submission: "(t.submission_date AT TIME ZONE 'Asia/Kolkata')",
             completed: "t.submission_date IS NOT NULL",
             notDone: "FALSE",
-            onTime: "t.submission_date IS NOT NULL AND t.status = 'Done'",
+            // Chatbot-only rule: the dashboard's rule (status = 'Done') never matches
+            // because maintenance status is yes / no / Pending / Leave, so it always
+            // shows 0. Here: submitted on or before the planned date (like checklist).
+            onTime:
+                "t.submission_date IS NOT NULL AND t.planned_date IS NOT NULL " +
+                "AND (t.submission_date AT TIME ZONE 'UTC')::date <= (t.planned_date AT TIME ZONE 'UTC')::date",
             delay: "t.delay",
             remarks: "t.remarks",
             approval: "t.admin_done",
@@ -481,7 +489,9 @@ const buildTasksCte = (profile, filters) => {
     const branches = selected.map((b) => {
         const c = b.cols;
         const col = b.dateCol;
-        const dateExpr = b.hasTimeZone ? `(${col} AT TIME ZONE 'Asia/Kolkata')::date` : `${col}::date`;
+        const dateExpr = b.hasTimeZone
+            ? `(${col} AT TIME ZONE '${b.dateZone || "Asia/Kolkata"}')::date`
+            : `${col}::date`;
         // Range on the raw column for timestamp tables keeps it index-friendly.
         const rangeSql = b.hasTimeZone
             ? `${dateExpr} BETWEEN ${startP}::date AND ${endP}::date`
@@ -622,7 +632,7 @@ export const getTaskSummary = async (args, profile) => {
         filters: describeFilters(filters),
         access_scope: describeScope(profile),
         definitions:
-            "pending = not yet submitted (includes overdue and due_today); overdue = pending with task date before today; completed = submitted (checklist: marked yes); not_done = checklist submitted as 'no'; on_time / late = completed tasks done on time / late (dashboard rules: checklist submitted on or before planned date, delegation color code 1, maintenance status Done); on_time_rate_percent = on_time / completed (same as the dashboard On Time %); extended = delegation tasks that were extended at least once. Checklist counts include completed daily work reports, exactly like the dashboard.",
+            "pending = not yet submitted (includes overdue and due_today); overdue = pending with task date before today; completed = submitted (checklist: marked yes); not_done = checklist submitted as 'no'; on_time / late = completed tasks done on time / late (checklist and maintenance: submitted on or before the planned date; delegation: color code 1). NOTE: the dashboard currently shows maintenance On Time as 0 because its rule checks a status value that never occurs; the chatbot's maintenance on-time is the real figure, so it will differ from the dashboard for maintenance only; on_time_rate_percent = on_time / completed (same as the dashboard On Time %); extended = delegation tasks that were extended at least once. Checklist counts include completed daily work reports, exactly like the dashboard.",
         overall: withRate(combined),
         by_task_type: rows.map(withRate)
     };

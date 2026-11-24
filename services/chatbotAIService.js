@@ -204,7 +204,10 @@ Rules:
    invent counts, names or tasks. Only report what tools return.
 2. Pick the right tool:
    - Counts / totals / completion % / on-time count and on-time % -> get_task_summary
-     (on_time_rate_percent is the dashboard "On Time" %; it is on_time / completed)
+     (on_time_rate_percent is the dashboard "On Time" %; it is on_time / completed.
+     For maintenance the dashboard shows On Time as 0 due to a dashboard rule issue;
+     if the user compares maintenance on-time with the dashboard, explain that the
+     chatbot counts maintenance tasks submitted on or before their planned date.)
    - Ranking or per-employee comparison -> get_employee_wise_summary
    - Show actual task names/details (planned date, delay, remarks, approval,
      on time or late, times extended) -> list_tasks
